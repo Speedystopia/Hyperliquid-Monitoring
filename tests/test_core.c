@@ -3,8 +3,29 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../src/core.h"
-int main(void) {
+int main(int argc,char **argv) {
     Database db={0},copy={0};cJSON *json,*gaps;char *text;Point p={0};Series *s=&db.markets[0].funding;
+    if(argc==2 && !strcmp(argv[1],"--live-sec")){
+        SecYield live={0};int ok=tlt_sec_sync(&live,1);char *result=cJSON_PrintUnformatted(json=tlt_sec_json(&live));
+        puts(result);free(result);cJSON_Delete(json);return ok?0:1;
+    }
+    {
+        FILE *file=fopen("tests/fixtures/tlt-sec.html","rb");char fixture[4096],asOf[11];size_t length;double percent;SecYield yield={0},loaded={0};int64_t time=INT64_C(1791892800000);
+        assert(file);length=fread(fixture,1,sizeof(fixture)-1,file);fclose(file);fixture[length]=0;
+        assert(tlt_sec_parse(fixture,&percent,asOf));assert(percent==5.54 && !strcmp(asOf,"2026-10-09"));
+        assert(!tlt_sec_parse("<html>30 Day SEC Yield 5.54%</html>",&percent,asOf));
+        assert(!tlt_sec_parse("<script type='application/ld+json'>{\"@graph\":[{\"alternateName\":\"OTHER\"},{\"additionalProperty\":[{\"name\":\"30 Day SEC Yield\",\"value\":\"5.54%\",\"valueReference\":{\"value\":\"Oct 09, 2026\"}}]}]}</script>",&percent,asOf));
+        assert(tlt_sec_apply(&yield,200,fixture,time,"\"v1\"","Fri, 09 Oct 2026 20:00:00 GMT"));
+        assert(tlt_sec_apply(&yield,304,NULL,time+HOUR_MS,NULL,NULL));assert(yield.percent==5.54 && yield.checked==time+HOUR_MS);
+        assert(!tlt_sec_apply(&yield,503,NULL,time+2*HOUR_MS,NULL,NULL));assert(yield.available && yield.percent==5.54 && !strcmp(yield.error,"TLT_SEC_HTTP_503"));
+        assert(!tlt_sec_apply(&yield,200,"<html>blocked</html>",time+3*HOUR_MS,NULL,NULL));assert(yield.percent==5.54 && !strcmp(yield.error,"TLT_SEC_INVALID_RESPONSE"));
+        json=tlt_sec_json(&yield);tlt_sec_load(&loaded,json);cJSON_Delete(json);assert(loaded.percent==5.54 && !strcmp(loaded.error,yield.error) && !strcmp(loaded.etag,"\"v1\""));
+        assert(tlt_sec_apply(&loaded,304,NULL,time+4*HOUR_MS,NULL,NULL));assert(!loaded.error[0]);
+        {SecYield missing={0};assert(!tlt_sec_apply(&missing,304,NULL,time,NULL,NULL));assert(!missing.available);}
+        {char *where=strstr(fixture,"Oct 09, 2026");assert(where);memcpy(where,"Feb 30, 2026",12);where=strstr(where+12,"Oct 09, 2026");assert(where);memcpy(where,"Feb 30, 2026",12);assert(!tlt_sec_parse(fixture,&percent,asOf));}
+        db.tltSecYield=loaded;
+        puts("C: exact SEC metric/date parsing, decoy rejection, 304 cache, error retention/recovery and invalid dates OK");
+    }
     p.time=3*HOUR_MS;p.sourceTime=p.time+47;p.value=0.0001;p.premium=0;assert(series_put(s,p));
     p.time=HOUR_MS;p.sourceTime=p.time+12;assert(series_put(s,p));
     assert(s->count==2 && s->points[0].time==HOUR_MS);
@@ -16,6 +37,8 @@ int main(void) {
     assert(series_put(&db.markets[8].close4h,close));assert(series_put(&db.markets[13].funding,eth));}
     json=database_json(&db);text=cJSON_PrintUnformatted(json);cJSON_Delete(json);
     assert(database_load(&copy,text));assert(copy.markets[0].funding.count==3);
+    assert(copy.tltSecYield.available && copy.tltSecYield.percent==5.54 && !strcmp(copy.tltSecYield.asOf,"2026-10-09"));
+    {cJSON *old=cJSON_Parse(text);char *without;cJSON_DeleteItemFromObjectCaseSensitive(old,"benchmarks");without=cJSON_PrintUnformatted(old);assert(database_load(&copy,without));assert(!copy.tltSecYield.available && copy.markets[0].funding.count==3);free(without);cJSON_Delete(old);}
     assert(copy.markets[0].funding.points[1].value==-0.0002);
     assert(OIL_MARKET_COUNT==15 && !strcmp(OIL_COINS[4],"BTC"));
     assert(copy.markets[13].funding.count==1 && !strcmp(OIL_COINS[13],"ETH"));

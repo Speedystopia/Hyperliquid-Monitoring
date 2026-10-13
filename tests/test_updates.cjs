@@ -50,7 +50,7 @@ async function testPoller(){
 async function testInterface(){
  const fs=require('node:fs'),vm=require('node:vm'),math=require('../web/math.js');
  const timers=new Map(),rafs=new Map(),elements=new Map(),documentEvents={},windowEvents={},resizeCallbacks=[];
- const requests={},calculations={},writes={};let timerId=0,rafId=0,canvasResizes=0,revision=1,hours=120,fundingNegative=true,fundingMultiplier=1,tltFundingRate=.0001,accountReady=false,accountVersion=0;
+ const requests={},calculations={},writes={};let timerId=0,rafId=0,canvasResizes=0,revision=1,hours=120,fundingNegative=true,fundingMultiplier=1,tltFundingRate=.0001,secPercent=87.6,secError='',accountReady=false,accountVersion=0;
  const context2d=new Proxy({measureText:text=>({width:text.length*6})},{get:(target,key)=>target[key]||(()=>{})});
  function element(id){if(elements.has(id))return elements.get(id);let html='',width=0,height=0;
   const el={id,value:'',checked:false,disabled:false,style:{},dataset:{},events:{},parentElement:{},textContent:'',offsetWidth:180,offsetHeight:100,className:'',hidden:false,classList:{toggle(){},contains(){return false;}},
@@ -62,7 +62,7 @@ async function testInterface(){
  for(const id of ['range','timezone','language','overlays','funding','price','combined'])element(id);
  element('range').value='30';element('timezone').value='UTC';element('language').value='en';element('overlays').checked=true;
  const frames=['4h','1d'].map(frame=>{const el=element('frame-'+frame);el.dataset.frame=frame;return el;});
- function fixture(){const data={schemaVersion:3,lastSuccessfulSync:hours*math.HOUR,markets:{}};
+ function fixture(){const data={schemaVersion:3,lastSuccessfulSync:hours*math.HOUR,benchmarks:{tltSecYield:{percent:secPercent,asOf:'2026-10-09',lastSuccessfulCheck:hours*math.HOUR,errorCode:secError}},markets:{}};
   for(const [i,m] of require('../web/catalog.js').keys.entries()){const market={price4hReachesFundingStart:true};
    for(const [name,span] of [['fundingHourly',1],['close4h',4],['close1d',24]]){const rows=Array.from({length:Math.floor(hours/span)},(_,j)=>({time:(j+1)*span*math.HOUR,...(name==='fundingHourly'?{fundingRate:m==='TLT'?tltFundingRate:.00001*(i+1)*(i===1?fundingMultiplier*(fundingNegative?-1:1):1)}:{close:100+i*10+j*.3+(i===8?-10:10)*Math.sin(j)})}));market[name]={rows,count:rows.length,firstTime:rows[0]?.time||0,lastTime:rows.at(-1)?.time||0,missingRanges:[]};}
    data.markets[m]=market;
@@ -104,14 +104,19 @@ async function testInterface(){
  assert.ok(element('funding-pairs').innerHTML.includes('negative'));assert.ok(element('funding-pairs').innerHTML.includes('WTI'));const annualCalls=calculations.fundingStats;await tick();assert.equal(calculations.fundingStats,annualCalls);
  let fundingHtml=element('funding-pairs').innerHTML;assert.ok(fundingHtml.includes('Corrélation · tout l’historique'));assert.ok(fundingHtml.includes('Funding net annualisé'));assert.ok(fundingHtml.includes('Short A · Long B · montants égaux'));assert.ok(fundingHtml.includes('Long A · Short B · montants égaux'));assert.ok(!/class="funding-net funding-net-\w+">-/.test(fundingHtml));assert.ok(/class="funding-net funding-net-below">\+/.test(fundingHtml));assert.ok(fundingHtml.includes('Référence TLT'));
  const netValues=html=>[...html.matchAll(/class="funding-net funding-net-\w+">([^<]+)/g)].map(m=>m[1]);const previousNet=netValues(fundingHtml);
- tltFundingRate=.00003;revision++;await tick();assert.ok(element('funding-pairs').innerHTML.includes('funding-net-near'));assert.deepEqual(netValues(element('funding-pairs').innerHTML),previousNet);
- tltFundingRate=0;revision++;await tick();assert.ok(element('funding-pairs').innerHTML.includes('funding-net-above'));
+ secPercent=26.28;revision++;await tick();assert.ok(element('funding-pairs').innerHTML.includes('funding-net-near'));assert.deepEqual(netValues(element('funding-pairs').innerHTML),previousNet);
+ secPercent=0;revision++;await tick();assert.ok(element('funding-pairs').innerHTML.includes('funding-net-above'));
+ secError='TLT_SEC_HTTP_503';revision++;await tick();assert.ok(element('funding-pairs').innerHTML.includes(secError));assert.ok(element('funding-pairs').innerHTML.includes('dernier taux connu conservé'));assert.ok(element('funding-pairs').innerHTML.includes('funding-net-above'));
+ secPercent=null;revision++;await tick();assert.ok(element('funding-pairs').innerHTML.includes('funding-net-unknown'));assert.ok(!element('funding-pairs').innerHTML.includes('funding-net-above'));assert.ok(element('funding-pairs').innerHTML.includes('Rendement SEC indisponible'));
+ secPercent=26.28;secError='';revision++;await tick();const beforePerp=[...element('funding-pairs').innerHTML.matchAll(/class="funding-net funding-net-\w+">/g)].map(m=>m[0]);tltFundingRate=.00003;revision++;await tick();assert.deepEqual([...element('funding-pairs').innerHTML.matchAll(/class="funding-net funding-net-\w+">/g)].map(m=>m[0]),beforePerp);
  fundingMultiplier=2;revision++;await tick();assert.notDeepEqual(netValues(element('funding-pairs').innerHTML),previousNet);
- fundingNegative=false;revision++;await tick();assert.ok(element('funding-pairs').innerHTML.includes('Aucune paire'));transfers=requests['/api/history'];
+ fundingNegative=false;revision++;await tick();assert.ok(element('funding-pairs').innerHTML.includes('Aucune paire'));
+ element('correlation-mode').value='returns';element('correlation-mode').onchange();assert.ok(element('inverse-funding-pairs').innerHTML.includes('Short A · Short B · montants égaux'));assert.ok(element('inverse-funding-pairs').innerHTML.includes('negative'));assert.ok(element('inverse-funding-pairs').innerHTML.includes('rendement SEC à 30 jours'));
+ const inverseBefore=element('inverse-funding-pairs').innerHTML;tltFundingRate=.00002;revision++;await tick();assert.notEqual(element('inverse-funding-pairs').innerHTML,inverseBefore);transfers=requests['/api/history'];
  context.window.location.hash='#home';windowEvents.hashchange();draw();assert.equal(element('home-view').hidden,false);assert.equal(element('monitor-content').hidden,true);assert.equal((element('market-cards').innerHTML.match(/class=\"market-card/g)||[]).length,2);
  const homeCalculations={...calculations};await tick();assert.deepEqual(calculations,homeCalculations);assert.equal(requests['/api/history'],transfers);
  document.hidden=true;documentEvents.visibilitychange();
- console.log('Interface: all 105 freely selected comparisons, three ranking tables and funding-only refresh, global matrix, home navigation and no duplicated history transfers OK');
+ console.log('Interface: all 105 comparisons, four ranking tables, SEC-only/funding-only refresh, source failure/neutral colors and independent TLT funding OK');
  console.log('Interface: ten idle polls cause no history transfer, statistics recalculation or card rewrites; hidden tab/return, cached frame/locale/positions and coalesced canvas drawing OK');
 }
 (async()=>{await testHistory();await testPoller();await testInterface();})().catch(error=>{console.error(error);process.exitCode=1;});

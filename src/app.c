@@ -62,6 +62,12 @@ static int legacy_startup_path(wchar_t *path,size_t capacity) {
     if(FAILED(SHGetFolderPathW(NULL,CSIDL_STARTUP,NULL,SHGFP_TYPE_CURRENT,folder)))return 0;
     return swprintf_s(path,capacity,L"%s\\Oil Perps Hyperliquid.lnk",folder)>0;
 }
+static int load_benchmark_seed(void){
+    char *text; cJSON *json; SecYield seed={0};
+    if(db.tltSecYield.available || db.tltSecYield.attempted || db.tltSecYield.error[0])return 0;
+    text=resource_text(OIL_SEC_SEED,NULL);json=text?cJSON_Parse(text):NULL;tlt_sec_load(&seed,json);free(text);cJSON_Delete(json);
+    if(!seed.available)return 0;db.tltSecYield=seed;return 1;
+}
 static int startup_enabled(void) {
     HKEY key;DWORD size=0;LONG result;wchar_t legacy[MAX_PATH+64];
     result=RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",0,KEY_QUERY_VALUE,&key);
@@ -97,6 +103,7 @@ static int load_data(void) {
     char *s=read_file("data/history.json",NULL);int existed=GetFileAttributesW(L"data/history.json")!=INVALID_FILE_ATTRIBUTES;
     if(s && database_load(&db,s)){
         int legacy=db.loadedSchema<3,upgrade=legacy || db.loadedFundingSchedule!=1;
+        if(load_benchmark_seed())upgrade=1;
         free(s);
         if(legacy){
             Database seed={0};int i;char *embedded=resource_text(OIL_SEED,NULL);
@@ -110,6 +117,7 @@ static int load_data(void) {
     }free(s);
     s=read_file("data/history.backup.json",NULL);
     if(s && database_load(&db,s)){
+        load_benchmark_seed();
         free(s);oil_log("Recovered valid backup; corrupt primary retained as history.corrupt.json");
         if(existed && !MoveFileExW(L"data/history.json",L"data/history.corrupt.json",MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)) return 0;
         return save_data();
@@ -117,7 +125,7 @@ static int load_data(void) {
     free(s);
     if(existed || GetFileAttributesW(L"data/history.backup.json")!=INVALID_FILE_ATTRIBUTES)return 0;
     s=resource_text(OIL_SEED,NULL);if(!s)return 0;
-    {int ok=database_load(&db,s);free(s);return ok && save_data();}
+    {int ok=database_load(&db,s);free(s);if(ok)load_benchmark_seed();return ok && save_data();}
 }
 static int save_data(void) {
     cJSON *root=database_json(&db);char *s=cJSON_PrintUnformatted(root);HANDLE f;DWORD written;BOOL ok=FALSE;
@@ -135,7 +143,9 @@ static int save_data(void) {
     LeaveCriticalSection(&file_lock);free(s);if(!ok){DWORD error=GetLastError();snprintf(db.lastError,sizeof(db.lastError),"STORE_WIN32_%lu",(unsigned long)error);oil_log("ERROR saving history code=%s",db.lastError);}return ok;
 }
 static int sync_once(void) {
+    static int benchmark_started=0;
     int ok;InterlockedExchange(&syncing,1);oil_log("Synchronization started");
+    tlt_sec_sync(&db.tltSecYield,!benchmark_started);benchmark_started=1;
     ok=database_sync(&db);if(!save_data())ok=0;
     EnterCriticalSection(&file_lock);strcpy_s(status_error,sizeof(status_error),db.lastError);status_successful=db.successful;status_attempted=db.attempted;LeaveCriticalSection(&file_lock);
     InterlockedExchange(&last_ok,ok);InterlockedExchange(&syncing,0);
@@ -300,7 +310,7 @@ static int run(int argc,wchar_t **argv) {
     for(i=1;i<argc;i++){if(!wcscmp(argv[i],L"--sync"))once=1;else if(!wcscmp(argv[i],L"--background"))background=1;
         else if(!wcscmp(argv[i],L"--verify-bundle")){
             Database check={0};char *seed;int id,ok;
-            for(id=OIL_HTML;id<=OIL_GLOBAL_JS;id++){char *asset=resource_text(id,NULL);if(!asset)return 4;free(asset);}
+            for(id=OIL_HTML;id<=OIL_SEC_SEED;id++){char *asset=resource_text(id,NULL);if(!asset)return 4;free(asset);}
             seed=resource_text(OIL_SEED,NULL);ok=seed&&database_load(&check,seed);free(seed);database_free(&check);return ok?0:4;
         }
         else if(!wcscmp(argv[i],L"--install-startup"))return (int)startup_set(1);

@@ -2,6 +2,7 @@
 #define OIL_CORE_H
 #include <stdint.h>
 #include "../vendor/cJSON.h"
+#include "benchmark.h"
 #define HOUR_MS INT64_C(3600000)
 #define DAY_MS (24 * HOUR_MS)
 #define OIL_MARKET_COUNT 15
@@ -9,7 +10,7 @@
 typedef struct { int64_t time, sourceTime; double value, premium; } Point;
 typedef struct { Point *points; size_t count, capacity; } Series;
 typedef struct { Series funding, close4h, close1d; } Market;
-typedef struct { Market markets[OIL_MARKET_COUNT]; int64_t attempted, successful; char lastError[256]; int loadedSchema, loadedFundingSchedule; } Database;
+typedef struct { Market markets[OIL_MARKET_COUNT]; int64_t attempted, successful; char lastError[256]; int loadedSchema, loadedFundingSchedule; SecYield tltSecYield; } Database;
 extern const char *OIL_COINS[OIL_MARKET_COUNT];
 extern const char *OIL_NAMES[OIL_MARKET_COUNT];
 extern const char *OIL_REQUESTED[OIL_MARKET_COUNT];

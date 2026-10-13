@@ -117,6 +117,7 @@ cJSON *database_json(const Database *db) {
     cJSON_AddNumberToObject(root,"lastAttempt",(double)db->attempted);
     cJSON_AddNumberToObject(root,"lastSuccessfulSync",(double)db->successful);
     cJSON_AddStringToObject(root,"lastError",db->lastError);
+    {cJSON *benchmarks=cJSON_CreateObject();cJSON_AddItemToObject(benchmarks,"tltSecYield",tlt_sec_json(&db->tltSecYield));cJSON_AddItemToObject(root,"benchmarks",benchmarks);}
     for(i=0;i<OIL_MARKET_COUNT;i++) {
         const Market *m=&db->markets[i]; cJSON *o=cJSON_CreateObject();
         int64_t a=m->funding.count?m->funding.points[0].time:0;
@@ -172,6 +173,7 @@ int database_load(Database *db,const char *text) {
     if(!isfinite(attempt)||!isfinite(success)||attempt<0||success<0)goto done;
     tmp.attempted=(int64_t)attempt;tmp.successful=(int64_t)success;}
     {cJSON *error=cJSON_GetObjectItemCaseSensitive(root,"lastError");if(cJSON_IsString(error))strncpy_s(tmp.lastError,sizeof(tmp.lastError),error->valuestring,_TRUNCATE);}
+    tlt_sec_load(&tmp.tltSecYield,cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(root,"benchmarks"),"tltSecYield"));
     database_free(db); *db=tmp; memset(&tmp,0,sizeof(tmp)); ok=1;
 done: cJSON_Delete(root); database_free(&tmp); return ok;
 }

@@ -74,6 +74,14 @@
   const difference=net-benchmark;
   return difference<=-1?'below':difference>=1?'above':'near';
  }
- const api={HOUR,SCALE,decimal,fixed,weighted,received,aggregateFunding,positionSummary,fundingStats,correlation,selectWindow,priceStats,indexAfter,priceReturns,correlationMatrix,fundingCarry,oppositeFundingPairs,fundingNetBand};
+ function inverseFundingPairs(cells,stats){
+  const pairs=[];
+  for(let i=0;i<stats.length;i++)for(let j=i+1;j<stats.length;j++){
+   const a=stats[i].annualized,b=stats[j].annualized,c=cells[i]?.[j];
+   if(Number.isFinite(a)&&Number.isFinite(b)&&c&&Number.isFinite(c.percent)&&c.percent<0&&c.count>=3&&((a>0&&b>0)||(a<0&&b<0)))pairs.push({i,j,...c,netAnnualized:Math.abs(a)+Math.abs(b),bothShort:a>0});
+  }
+  return pairs.sort((a,b)=>a.percent-b.percent);
+ }
+ const api={HOUR,SCALE,decimal,fixed,weighted,received,aggregateFunding,positionSummary,fundingStats,correlation,selectWindow,priceStats,indexAfter,priceReturns,correlationMatrix,fundingCarry,oppositeFundingPairs,inverseFundingPairs,fundingNetBand};
  if(typeof module!=='undefined')module.exports=api;else root.OilMath=api;
 })(globalThis);

@@ -9,3 +9,4 @@
 #define OIL_UPDATES_JS 109
 #define OIL_CATALOG_JS 110
 #define OIL_GLOBAL_JS 111
+#define OIL_SEC_SEED 112
