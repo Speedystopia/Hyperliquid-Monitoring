@@ -13,10 +13,20 @@ const char *OIL_COINS[2] = {"xyz:BRENTOIL", "xyz:CL"};
 const char *OIL_NAMES[2] = {"BRENTOIL", "WTIOIL"};
 volatile long oil_stop = 0;
 static char current_error[256]={0};
+static HANDLE shutdown_event=NULL;
+void oil_set_shutdown_event(void *event){shutdown_event=(HANDLE)event;}
 int64_t now_ms(void) {
     FILETIME ft; ULARGE_INTEGER v;
     GetSystemTimeAsFileTime(&ft); v.LowPart=ft.dwLowDateTime; v.HighPart=ft.dwHighDateTime;
     return (int64_t)(v.QuadPart / 10000 - UINT64_C(11644473600000));
+}
+uint32_t oil_collection_delay(int64_t time,int64_t last_hour,int64_t retry_at){
+    int64_t hour=time/HOUR_MS,target,delay;
+    if(time%HOUR_MS>=60000 && hour!=last_hour)return 0;
+    target=(hour+(time%HOUR_MS>=60000?1:0))*HOUR_MS+60000;
+    if(retry_at && retry_at<target)target=retry_at;
+    delay=target-time;if(delay<0)delay=0;if(delay>60000)delay=60000;
+    return (uint32_t)delay;
 }
 void oil_log(const char *format, ...) {
     FILE *f; SYSTEMTIME t; va_list args;
@@ -140,6 +150,7 @@ void database_free(Database *db) {
     memset(db,0,sizeof(*db));
 }
 static int pause_ms(DWORD duration) {
+    if(shutdown_event)return WaitForSingleObject(shutdown_event,duration)==WAIT_TIMEOUT && !oil_stop;
     DWORD elapsed=0; while(elapsed<duration && !oil_stop) {Sleep(100);elapsed+=100;} return !oil_stop;
 }
 static cJSON *api_request(const char *body,int quiet) {
@@ -199,7 +210,7 @@ static int fetch_funding(Series *s,const char *coin,int64_t start,int64_t end) {
             if(!series_put(s,p)){cJSON_Delete(arr);return 0;}if(p.sourceTime>maxTime)maxTime=p.sourceTime;
         }
         cJSON_Delete(arr);oil_log("funding %s page=%d total=%zu",coin,count,s->count);
-        if(!count) return 1;
+        if(count<500) return 1;
         if(maxTime<start) return 0;start=maxTime+1;
     }
     return !oil_stop;
@@ -218,11 +229,13 @@ static int fetch_prices(Series *s,const char *coin,const char *interval,int64_t 
     cJSON_Delete(arr);oil_log("prices %s %s total=%zu",coin,interval,s->count);return 1;
 }
 static int sync_funding(Series *s,const char *coin,int64_t now) {
-    cJSON *gaps,*g;int64_t boundary=now/HOUR_MS*HOUR_MS;
+    cJSON *gaps,*g;int64_t boundary=now/HOUR_MS*HOUR_MS,recent_start=boundary-2*HOUR_MS;
     if(!s->count) return fetch_funding(s,coin,0,now);
     gaps=series_gaps(s,HOUR_MS,boundary);
     cJSON_ArrayForEach(g,gaps) {
         int64_t a=(int64_t)number(g,"from"),b=(int64_t)number(g,"to");
+        /* The recent re-read below also fills gaps in this tail. */
+        if(a>=recent_start)continue;if(b>=recent_start)b=recent_start-HOUR_MS;
         if(!fetch_funding(s,coin,a,b+HOUR_MS-1)){cJSON_Delete(gaps);return 0;}
     }
     cJSON_Delete(gaps);
@@ -230,11 +243,12 @@ static int sync_funding(Series *s,const char *coin,int64_t now) {
     return fetch_funding(s,coin,boundary-2*HOUR_MS,now);
 }
 static int sync_prices(Series *s,const char *coin,const char *iv,int64_t step,int64_t now) {
-    cJSON *gaps,*g;int64_t boundary=now/step*step,retention=boundary-4999*step;
+    cJSON *gaps,*g;int64_t boundary=now/step*step,retention=boundary-4999*step,recent_first=boundary-step;
     if(!s->count) return fetch_prices(s,coin,iv,0,now,now,step);
     gaps=series_gaps(s,step,boundary);
     cJSON_ArrayForEach(g,gaps) {
         int64_t a=(int64_t)number(g,"from"),b=(int64_t)number(g,"to");
+        if(a>=recent_first)continue;if(b>=recent_first)b=recent_first-step;
         if(b<retention) continue;
         if(a<retention)a=retention;
         if(!fetch_prices(s,coin,iv,a-step,b-1,now,step)){cJSON_Delete(gaps);return 0;}

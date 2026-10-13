@@ -21,7 +21,10 @@ if errorlevel 1 exit /b 1
 powershell -NoProfile -Command "$p=Start-Process .\OilPerps.exe -ArgumentList --verify-bundle -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode"
 if errorlevel 1 exit /b 1
 where node >nul 2>nul
-if not errorlevel 1 node tests\test_ui.cjs
+if errorlevel 1 exit /b 0
+node tests\test_ui.cjs
+if errorlevel 1 exit /b 1
+node tests\test_updates.cjs
 exit /b %errorlevel%
 :missing
 echo Installez Visual Studio Build Tools avec "Developpement Desktop en C++".

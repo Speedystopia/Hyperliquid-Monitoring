@@ -11,6 +11,8 @@ typedef struct { Market markets[2]; int64_t attempted, successful; char lastErro
 extern const char *OIL_COINS[2];
 extern const char *OIL_NAMES[2];
 int64_t now_ms(void);
+uint32_t oil_collection_delay(int64_t time,int64_t last_hour,int64_t retry_at);
+void oil_set_shutdown_event(void *event);
 int series_put(Series *s, Point p);
 size_t series_lower(const Series *s, int64_t time);
 cJSON *series_gaps(const Series *s, int64_t step, int64_t end);

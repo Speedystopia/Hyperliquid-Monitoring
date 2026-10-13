@@ -6,3 +6,4 @@
 #define OIL_SEED 106
 #define OIL_LICENSE 107
 #define OIL_CJSON_LICENSE 108
+#define OIL_UPDATES_JS 109

@@ -20,8 +20,34 @@ static char *account_cache=NULL;
 static LONG account_generation=0,account_pending=0,account_busy=0;
 static volatile LONG syncing=0,requested=0,last_ok=1;
 static char status_error[256]={0};
+static int64_t status_successful=0,status_attempted=0;
+static uint64_t account_revision=0;
+static HANDLE shutdown_event=NULL,collector_event=NULL,account_event=NULL;
 static SOCKET listener=INVALID_SOCKET;
 static NOTIFYICONDATAW tray;
+static void request_collection(void){InterlockedExchange(&requested,1);if(collector_event)SetEvent(collector_event);}
+static void request_shutdown(void){InterlockedExchange(&oil_stop,1);if(shutdown_event)SetEvent(shutdown_event);}
+static void history_stamp(char *out,size_t capacity){
+    WIN32_FILE_ATTRIBUTE_DATA attributes;ULARGE_INTEGER time,size;
+    out[0]=0;if(!GetFileAttributesExW(L"data/history.json",GetFileExInfoStandard,&attributes))return;
+    time.LowPart=attributes.ftLastWriteTime.dwLowDateTime;time.HighPart=attributes.ftLastWriteTime.dwHighDateTime;
+    size.LowPart=attributes.nFileSizeLow;size.HighPart=attributes.nFileSizeHigh;
+    snprintf(out,capacity,"%llx-%llx",(unsigned long long)time.QuadPart,(unsigned long long)size.QuadPart);
+}
+static int header_equals(const char *request,const char *name,const char *value){
+    const char *line=strstr(request,"\r\n");size_t name_len=strlen(name),value_len=strlen(value);
+    while(line && line[2]){
+        const char *start=line+2,*end=strstr(start,"\r\n"),*text;
+        if(!end)return 0;
+        if((size_t)(end-start)>name_len && !_strnicmp(start,name,name_len) && start[name_len]==':'){
+            text=start+name_len+1;while(text<end && (*text==' '||*text=='\t'))text++;
+            while(end>text && (end[-1]==' '||end[-1]=='\t'))end--;
+            return (size_t)(end-text)==value_len && !memcmp(text,value,value_len);
+        }
+        line=end;
+    }
+    return 0;
+}
 static int save_data(void);
 static char *resource_text(int id,size_t *length) {
     HMODULE module=GetModuleHandleW(NULL);HRSRC res=FindResourceW(module,MAKEINTRESOURCEW(id),RT_RCDATA);
@@ -99,12 +125,12 @@ static int save_data(void) {
 static int sync_once(void) {
     int ok;InterlockedExchange(&syncing,1);oil_log("Synchronization started");
     ok=database_sync(&db);if(!save_data())ok=0;
-    EnterCriticalSection(&file_lock);strcpy_s(status_error,sizeof(status_error),db.lastError);LeaveCriticalSection(&file_lock);
+    EnterCriticalSection(&file_lock);strcpy_s(status_error,sizeof(status_error),db.lastError);status_successful=db.successful;status_attempted=db.attempted;LeaveCriticalSection(&file_lock);
     InterlockedExchange(&last_ok,ok);InterlockedExchange(&syncing,0);
     oil_log("Synchronization finished ok=%d",ok);return ok;
 }
 static DWORD WINAPI collector_thread(void *unused) {
-    int64_t last_hour=-1,retry_at=0;(void)unused;
+    int64_t last_hour=-1,retry_at=0;HANDLE events[2]={shutdown_event,collector_event};(void)unused;
     InterlockedExchange(&requested,1);
     while(!oil_stop) {
         int64_t t=now_ms(),hour=t/HOUR_MS;int minute=(int)((t%HOUR_MS)/60000);
@@ -118,12 +144,15 @@ static DWORD WINAPI collector_thread(void *unused) {
             }
             last_hour=minute>=1?hour:hour-1;retry_at=ok&&fresh?0:now_ms()+300000;
         }
-        Sleep(1000);
+        {
+            DWORD delay=oil_collection_delay(now_ms(),last_hour,retry_at);
+            if(WaitForMultipleObjects(2,events,FALSE,delay)==WAIT_OBJECT_0)break;
+        }
     }
     return 0;
 }
 static DWORD WINAPI account_thread(void *unused) {
-    int64_t next=0;(void)unused;
+    int64_t next=0;HANDLE events[2]={shutdown_event,account_event};(void)unused;
     while(!oil_stop) {
         char address[43];LONG generation;int pending;
         EnterCriticalSection(&account_lock);strcpy_s(address,43,account_address);generation=account_generation;
@@ -132,10 +161,15 @@ static DWORD WINAPI account_thread(void *unused) {
             cJSON *result;char *text;InterlockedExchange(&account_busy,1);
             result=account_scan(address);text=cJSON_PrintUnformatted(result);cJSON_Delete(result);
             EnterCriticalSection(&account_lock);
-            if(generation==account_generation){free(account_cache);account_cache=text;text=NULL;}
+            if(generation==account_generation){free(account_cache);account_cache=text;text=NULL;account_revision++;}
             LeaveCriticalSection(&account_lock);free(text);InterlockedExchange(&account_busy,0);next=now_ms()+60000;
         }
-        Sleep(500);
+        {
+            int64_t delay=next-now_ms();DWORD timeout;
+            if(delay<0)delay=0;if(delay>60000)delay=60000;
+            timeout=address[0]?(DWORD)delay:INFINITE;
+            if(WaitForMultipleObjects(2,events,FALSE,timeout)==WAIT_OBJECT_0)break;
+        }
     }
     return 0;
 }
@@ -160,7 +194,7 @@ static void handle_client(SOCKET s) {
     }
     if(!strcmp(method,"POST") && !strcmp(path,"/api/sync")) {
         if(!strstr(req,"\r\nX-Oil-Client: 1\r\n") && !strstr(req,"\r\nx-oil-client: 1\r\n")){respond(s,403,"text/plain","Refuse",6);return;}
-        InterlockedExchange(&requested,1);respond(s,202,"application/json","{\"queued\":true}",15);return;
+        request_collection();respond(s,202,"application/json","{\"queued\":true}",15);return;
     }
     if(!strcmp(method,"POST") && !strcmp(path,"/api/startup")) {
         LONG error;char status[128];int len,enabled;
@@ -178,14 +212,17 @@ static void handle_client(SOCKET s) {
         head=strstr(req,"\r\nX-Oil-Address: ");if(!head)head=strstr(req,"\r\nx-oil-address: ");
         if(head){head+=17;if(strncmp(head,"clear\r\n",7)){if(strlen(head)<44){respond(s,400,"text/plain","Adresse invalide",16);return;}memcpy(address,head,42);if(head[42]!='\r'||head[43]!='\n'||!address_valid(address)){respond(s,400,"text/plain","Adresse invalide",16);return;}}}
         else {respond(s,400,"text/plain","Adresse requise",15);return;}
-        EnterCriticalSection(&account_lock);strcpy_s(account_address,43,address);account_generation++;account_pending=address[0]?1:0;free(account_cache);account_cache=NULL;LeaveCriticalSection(&account_lock);
+        EnterCriticalSection(&account_lock);strcpy_s(account_address,43,address);account_generation++;account_pending=address[0]?1:0;free(account_cache);account_cache=NULL;account_revision++;LeaveCriticalSection(&account_lock);
+        SetEvent(account_event);
         respond(s,202,"application/json","{\"queued\":true}",15);return;
     }
     if(strcmp(method,"GET")){respond(s,405,"text/plain","GET requis",10);return;}
     if(!strcmp(path,"/api/startup")){const char *status=startup_enabled()?"{\"enabled\":true}":"{\"enabled\":false}";respond(s,200,"application/json",status,strlen(status));return;}
     if(!strcmp(path,"/api/status")) {
-        char status[512];int len;EnterCriticalSection(&file_lock);
-        len=snprintf(status,sizeof(status),"{\"syncing\":%s,\"queued\":%s,\"lastOk\":%s,\"now\":%lld,\"errorCode\":\"%s\"}",syncing?"true":"false",requested?"true":"false",last_ok?"true":"false",(long long)now_ms(),status_error);
+        char status[768],stamp[80];int len,ready,busy;uint64_t revision;
+        EnterCriticalSection(&account_lock);revision=account_revision;ready=account_cache!=NULL;busy=account_busy||account_pending;LeaveCriticalSection(&account_lock);
+        EnterCriticalSection(&file_lock);history_stamp(stamp,sizeof(stamp));
+        len=snprintf(status,sizeof(status),"{\"syncing\":%s,\"queued\":%s,\"lastOk\":%s,\"now\":%lld,\"errorCode\":\"%s\",\"historyVersion\":\"%s\",\"lastSuccessfulSync\":%lld,\"lastAttempt\":%lld,\"accountVersion\":%llu,\"accountReady\":%s,\"accountBusy\":%s}",syncing?"true":"false",requested?"true":"false",last_ok?"true":"false",(long long)now_ms(),status_error,stamp,(long long)status_successful,(long long)status_attempted,(unsigned long long)revision,ready?"true":"false",busy?"true":"false");
         LeaveCriticalSection(&file_lock);
         respond(s,200,"application/json",status,(size_t)len);return;
     }
@@ -196,11 +233,22 @@ static void handle_client(SOCKET s) {
         if(body){respond(s,200,"application/json",body,length);free(body);}
         else respond(s,200,"application/json", "{\"pending\":true}",16);return;
     }
-    if(!strcmp(path,"/api/history")) {EnterCriticalSection(&file_lock);body=read_file("data/history.json",&length);LeaveCriticalSection(&file_lock);}
+    if(!strcmp(path,"/api/history")) {
+        char stamp[80],tag[84],header[512];int header_len;
+        EnterCriticalSection(&file_lock);history_stamp(stamp,sizeof(stamp));snprintf(tag,sizeof(tag),"\"%s\"",stamp);
+        if(stamp[0] && header_equals(req,"If-None-Match",tag)){
+            LeaveCriticalSection(&file_lock);header_len=snprintf(header,sizeof(header),"HTTP/1.1 304 Not Modified\r\nETag: %s\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",tag);send_all(s,header,(size_t)header_len);return;
+        }
+        body=read_file("data/history.json",&length);LeaveCriticalSection(&file_lock);
+        if(!body){respond(s,404,"text/plain","Indisponible",12);return;}
+        header_len=snprintf(header,sizeof(header),"HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: %zu\r\nETag: %s\r\nCache-Control: no-cache\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",length,tag);
+        if(send_all(s,header,(size_t)header_len))send_all(s,body,length);free(body);return;
+    }
     else if(!strcmp(path,"/") || !strcmp(path,"/index.html"))body=resource_text(OIL_HTML,&length);
     else if(!strcmp(path,"/app.js"))body=resource_text(OIL_APP_JS,&length);
     else if(!strcmp(path,"/math.js"))body=resource_text(OIL_MATH_JS,&length);
     else if(!strcmp(path,"/i18n.js"))body=resource_text(OIL_I18N_JS,&length);
+    else if(!strcmp(path,"/updates.js"))body=resource_text(OIL_UPDATES_JS,&length);
     else if(!strcmp(path,"/style.css"))body=resource_text(OIL_CSS,&length);
     else if(!strcmp(path,"/licenses")){
         size_t aLen=0,bLen=0;char *a=resource_text(OIL_LICENSE,&aLen),*b=resource_text(OIL_CJSON_LICENSE,&bLen);
@@ -224,11 +272,11 @@ static LRESULT CALLBACK window_proc(HWND window,UINT message,WPARAM wp,LPARAM lp
             POINT p;HMENU menu=CreatePopupMenu();int chosen;GetCursorPos(&p);
             AppendMenuW(menu,MF_STRING,1,L"Ouvrir les graphiques");AppendMenuW(menu,MF_STRING,2,L"Synchroniser maintenant");AppendMenuW(menu,MF_STRING,3,L"Quitter le collecteur");
             SetForegroundWindow(window);chosen=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,p.x,p.y,0,window,NULL);DestroyMenu(menu);
-            if(chosen==1)show_ui();if(chosen==2)InterlockedExchange(&requested,1);if(chosen==3)DestroyWindow(window);
+            if(chosen==1)show_ui();if(chosen==2)request_collection();if(chosen==3)DestroyWindow(window);
         }
         return 0;
     }
-    if(message==WM_DESTROY){InterlockedExchange(&oil_stop,1);Shell_NotifyIconW(NIM_DELETE,&tray);PostQuitMessage(0);return 0;}
+    if(message==WM_DESTROY){request_shutdown();Shell_NotifyIconW(NIM_DELETE,&tray);PostQuitMessage(0);return 0;}
     if(message==WM_APP+2){DestroyWindow(window);return 0;}
     return DefWindowProcW(window,message,wp,lp);
 }
@@ -238,7 +286,7 @@ static int run(int argc,wchar_t **argv) {
     for(i=1;i<argc;i++){if(!wcscmp(argv[i],L"--sync"))once=1;else if(!wcscmp(argv[i],L"--background"))background=1;
         else if(!wcscmp(argv[i],L"--verify-bundle")){
             Database check={0};char *seed;int id,ok;
-            for(id=OIL_HTML;id<=OIL_CJSON_LICENSE;id++){char *asset=resource_text(id,NULL);if(!asset)return 4;free(asset);}
+            for(id=OIL_HTML;id<=OIL_UPDATES_JS;id++){char *asset=resource_text(id,NULL);if(!asset)return 4;free(asset);}
             seed=resource_text(OIL_SEED,NULL);ok=seed&&database_load(&check,seed);free(seed);database_free(&check);return ok?0:4;
         }
         else if(!wcscmp(argv[i],L"--install-startup"))return (int)startup_set(1);
@@ -249,7 +297,10 @@ static int run(int argc,wchar_t **argv) {
     if(!mutex)return 2;
     if(GetLastError()==ERROR_ALREADY_EXISTS){if(!once&&!background)show_ui();CloseHandle(mutex);return once?3:0;}
     CreateDirectoryW(L"data",NULL);InitializeCriticalSection(&file_lock);InitializeCriticalSection(&account_lock);
+    shutdown_event=CreateEventW(NULL,TRUE,FALSE,NULL);collector_event=CreateEventW(NULL,FALSE,FALSE,NULL);account_event=CreateEventW(NULL,FALSE,FALSE,NULL);
+    if(!shutdown_event||!collector_event||!account_event){result=2;goto done;}oil_set_shutdown_event(shutdown_event);
     if(!load_data()){oil_log("ERROR: history and backup invalid; refused to overwrite");MessageBoxW(NULL,L"Le JSON et sa sauvegarde sont illisibles. Les fichiers ont ete preserves.",L"Oil Perps Hyperliquid",MB_ICONERROR);result=2;goto done;}
+    status_successful=db.successful;status_attempted=db.attempted;strcpy_s(status_error,sizeof(status_error),db.lastError);last_ok=db.lastError[0]?0:1;
     if(once){result=sync_once()?0:1;goto done;}
     if(WSAStartup(MAKEWORD(2,2),&wsa)){result=2;goto done;}
     listener=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);addr.sin_family=AF_INET;addr.sin_port=htons(PORT);addr.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
@@ -264,7 +315,7 @@ static int run(int argc,wchar_t **argv) {
     worker=CreateThread(NULL,0,collector_thread,NULL,0,NULL);server=CreateThread(NULL,0,http_thread,NULL,0,NULL);accountWorker=CreateThread(NULL,0,account_thread,NULL,0,NULL);
     if(!worker||!server||!accountWorker){DestroyWindow(window);result=2;}
     else {if(!background)show_ui();while(GetMessageW(&msg,NULL,0,0)>0){TranslateMessage(&msg);DispatchMessageW(&msg);}}
-    InterlockedExchange(&oil_stop,1);
+    request_shutdown();
 net_done:
     if(listener!=INVALID_SOCKET){closesocket(listener);listener=INVALID_SOCKET;}
     if(server){WaitForSingleObject(server,5000);CloseHandle(server);}
@@ -272,6 +323,7 @@ net_done:
     if(accountWorker){WaitForSingleObject(accountWorker,45000);CloseHandle(accountWorker);}
     WSACleanup();
 done:
+    oil_set_shutdown_event(NULL);if(shutdown_event)CloseHandle(shutdown_event);if(collector_event)CloseHandle(collector_event);if(account_event)CloseHandle(account_event);
     database_free(&db);free(account_cache);DeleteCriticalSection(&account_lock);DeleteCriticalSection(&file_lock);CloseHandle(mutex);return result;
 }
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show) {

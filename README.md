@@ -20,9 +20,13 @@ Requirements: Windows 10/11 x64, an Internet connection for new data, and a mode
 
 In normal background operation, the collector opens no console or browser window and plays no notification sounds. It stays available through its system tray icon. Collection failures are recorded in the log and shown in the interface; local startup problems, such as an unreadable history and backup or an unavailable port, can display an error dialog.
 
-Worker threads sleep or wait between tasks. Market data is fetched at startup and hourly, with additional requests for recovery, retries, or manual synchronization. After scanning an address, account positions are refreshed every minute until the address is cleared or the collector exits. This account refresh continues if the browser tab is closed.
+The collector waits for the next collection deadline or an explicit request, with a lightweight clock check at most once per minute. The account worker waits indefinitely when no address has been selected, and wakes immediately for a new scan or shutdown. Market data is fetched at startup and hourly, with additional requests for recovery, retries, or manual synchronization. Recent data is reread to catch late publication or corrections; missing ranges already covered by that reread are not requested twice. Funding pagination stops when the returned page is smaller than the API's 500-row limit.
 
-The browser interface currently checks for updates every four seconds and can retrieve and parse the history JSON even when the data has not changed. Browser memory and processing are additional to the collector's own usage. Closing the interface reduces this work while automatic collection continues. Usage depends on history size, the browser, account scanning, and whether synchronization is running; there is no fixed CPU or memory guarantee.
+While the tab is visible, the interface checks a small status response every 15 seconds when idle and every two seconds during collection or an account scan. It downloads and parses the history JSON only when the stored snapshot version changes. Conditional requests use an ETag; an unchanged response is HTTP 304 with no JSON body. Account results are downloaded only when their version changes.
+
+When the tab is hidden, polling stops, in-flight requests are cancelled, and chart rendering is suspended. Returning to the tab checks for updates immediately. Funding aggregates, period statistics, position levels, and number/date formatters are reused until their inputs change. Canvas redraws are coalesced to animation frames, and backing buffers are resized only when chart dimensions change.
+
+After scanning an address, the backend continues refreshing positions every minute until the address is cleared or the collector exits, including while the tab is hidden or closed. Market collection likewise continues independently of the interface. Browser memory and processing remain additional to the collector's own usage. Usage depends on history size, the browser, account scanning, and synchronization; there is no fixed CPU or memory guarantee.
 
 ## Data and schedule
 
@@ -88,7 +92,7 @@ Start-Process .\OilPerps.exe -ArgumentList '--sync' -WindowStyle Hidden -Wait
 
 `--sync` performs one collection, saves the JSON, and exits. Exit codes: 0 = success, 1 = partial failure, 2 = local error, 3 = collector already running. `--background` starts the collector without opening a tab. Stop the collector before copying the data folder to obtain a consistent snapshot.
 
-Repository layout: `src/` contains the C collector and Windows integration; `web/` contains the interface sources; `vendor/` contains cJSON 1.7.19 under the MIT license; `tests/` covers merging, deduplication, gaps, JSON round trips, funding aggregation, period selection, and decimal precision; `.github/workflows/` provides automated Windows builds; `tools/build.cmd` is for development only. The Windows resource compiler embeds the interface, licenses, and initial JSON into the executable. The build also verifies that the resources are present and that the embedded JSON is readable.
+Repository layout: `src/` contains the C collector and Windows integration; `web/` contains the interface sources; `vendor/` contains cJSON 1.7.19 under the MIT license; `tests/` covers merging, deduplication, gaps, JSON round trips, funding aggregation, period selection, decimal precision, versioned loading, hidden-tab cancellation and resume, calculation caching, and collection deadlines; `.github/workflows/` provides automated Windows builds; `tools/build.cmd` is for development only. The Windows resource compiler embeds the interface, licenses, and initial JSON into the executable. The build also verifies that the resources are present and that the embedded JSON is readable.
 
 ## Sources
 

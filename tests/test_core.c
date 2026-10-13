@@ -17,6 +17,14 @@ int main(void) {
     assert(copy.markets[0].funding.points[1].value==-0.0002);
     free(text);assert(!database_load(&copy,"{\"schemaVersion\":9}"));assert(copy.markets[0].funding.count==3);
     assert(address_valid("0x1111111111111111111111111111111111111111"));assert(!address_valid("0xnot-an-address"));
+    assert(oil_collection_delay(5*HOUR_MS+59000,4,0)==1000);
+    assert(oil_collection_delay(5*HOUR_MS+60000,4,0)==0);
+    assert(oil_collection_delay(5*HOUR_MS+68000,4,0)==0);
+    assert(oil_collection_delay(5*HOUR_MS+68000,5,0)==60000);
+    assert(oil_collection_delay(5*HOUR_MS+68000,5,5*HOUR_MS+71000)==3000);
+    assert(oil_collection_delay(5*HOUR_MS+68000,5,5*HOUR_MS+65000)==0);
+    assert(oil_collection_delay(6*HOUR_MS+60000,5,0)==0);
+    puts("C: hourly deadline, startup crossing HH:01, retry timing and clock jump recovery OK");
 #ifdef OIL_TEST
     {Database failure={0};_putenv_s("OIL_TEST_HTTP_ERROR","503");assert(!database_sync(&failure));
     assert(!strcmp(failure.lastError,"HTTP_503") && !failure.successful);
