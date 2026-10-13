@@ -1,0 +1,11 @@
+build/
+*.obj
+*.pdb
+*.lib
+*.exp
+data/collector.log
+data/history.backup.json
+data/history.tmp.json
+data/history.corrupt.json
+tests/private-*
+*.lnk

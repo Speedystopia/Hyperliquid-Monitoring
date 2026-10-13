@@ -1,0 +1,23 @@
+const assert=require('node:assert/strict');const M=require('../web/math.js');
+const hours=Array.from({length:24},(_,i)=>({time:(i+1)*M.HOUR,fundingRate:.00001}));
+assert.equal(M.aggregateFunding(hours,4).length,6);assert.equal(M.aggregateFunding(hours,24).length,1);
+assert.ok(Math.abs(M.aggregateFunding(hours,24)[0].value-.024)<1e-12);
+assert.equal(M.aggregateFunding(hours.filter((_,i)=>i!==6),4).length,5);
+assert.equal(M.aggregateFunding(hours.filter((_,i)=>i!==6),24).length,0);
+assert.equal(M.aggregateFunding([...hours,hours[0]],24).length,1);
+const rows=[{size:'2',entryPrice:'100.12345678',liquidationPrice:'70',fundingPaidSinceOpen:'-2.123456'},{size:'1',entryPrice:'103.12345678',liquidationPrice:null,fundingPaidSinceOpen:'1'}];
+assert.equal(M.fixed(M.weighted(rows,'entryPrice')),'101.12345678');assert.equal(M.fixed(M.received(rows),6),'1.123456');assert.equal(M.fixed(M.weighted(rows,'liquidationPrice')),'70.00000000');
+assert.equal(M.received([{fundingPaidSinceOpen:null}]),null);
+assert.equal(M.fixed(M.decimal('-0.123456789'),8),'-0.12345679');
+const mixed=rows.map((r,i)=>({...r,market:'WTIOIL',size:i?'1':'-2'}));const s=M.positionSummary(mixed,'WTIOIL');assert.equal(M.fixed(s.entry),'101.12345678');assert.equal(M.fixed(s.long),'103.12345678');assert.equal(M.fixed(s.short),'100.12345678');
+console.log('JS: UTC 4H/1D funding alignment, missing periods, deduplication, decimal weighting, funding sign, null liquidation, mixed directions OK');
+const f=M.fundingStats(hours);assert.ok(Math.abs(f.annualized-8.76)<1e-10);assert.ok(Math.abs(f.rolling-.024)<1e-12);assert.equal(f.partial,true);
+const a=[1,2,3].map((value,i)=>({time:i,value}));assert.equal(M.correlation(a,a.map(p=>({...p,value:p.value*2+100}))).percent,100);
+assert.equal(M.correlation(a,a.map(p=>({...p,value:-p.value}))).percent,-100);assert.equal(M.correlation(a,a.map(p=>({...p,value:2}))).percent,null);
+assert.equal(M.correlation(a,[{time:1,value:3},{time:2,value:4}]).count,2);
+console.log('JS: realized annualized funding, partial annual history, Pearson alignment, constant series and sign OK');
+const fs=require('node:fs'),vm=require('node:vm');const langContext={localStorage:{getItem:()=>null,setItem:()=>{}},NodeFilter:{SHOW_TEXT:4},document:{body:{},documentElement:{},createTreeWalker:()=>({nextNode:()=>null}),querySelectorAll:()=>[],querySelector:()=>({value:''})}};
+vm.createContext(langContext);vm.runInContext(fs.readFileSync(require.resolve('../web/i18n.js'),'utf8')+';globalThis.testI18n=OilI18n;',langContext);
+assert.equal(langContext.testI18n.lang,'en');const expected={en:'Realized funding',fr:'Funding réalisé',zh:'实际资金费率',ko:'실현 펀딩',ja:'確定資金調達率',it:'Funding realizzato',es:'Funding realizado'};
+for(const [language,text] of Object.entries(expected)){langContext.testI18n.set(language);assert.equal(langContext.testI18n.translate('Funding réalisé'),text);}
+console.log('JS: English default and all seven language translations OK');
