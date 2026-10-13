@@ -31,3 +31,24 @@ assert.equal(M.priceStats(prices,end+M.HOUR,end+2*M.HOUR).latest,null);
 const paired=prices.map((p,i)=>({...p,value:i<110?p.value:440-p.value}));
 assert.notEqual(M.correlation(M.selectWindow(prices,end-7*24*M.HOUR,end),M.selectWindow(paired,end-7*24*M.HOUR,end)).percent,M.correlation(prices,paired).percent);
 console.log('JS: 7/30/90/full period selection updates funding, annualization, price average/change and correlation; empty windows handled OK');
+const Catalog=require('../web/catalog.js');
+assert.equal(Catalog.keys.length,9);assert.equal(new Set(Catalog.keys.map(k=>Catalog.assets[k].coin)).size,9);
+assert.equal(Catalog.assets.BTC.coin,'BTC');assert.equal(Catalog.assets.DIESEL.coin,'xyz:HO');assert.equal(Catalog.assets.EURUSD.coin,'xyz:EUR');
+const rising=[100,110,99,118.8,95.04].map((value,i)=>({time:(i+1)*4*M.HOUR,value}));
+const falling=[100,90,99,79.2,95.04].map((value,i)=>({time:(i+1)*4*M.HOUR,value}));
+const matrix=M.correlationMatrix([{price:rising},{price:falling}],4*M.HOUR,0,99*M.HOUR);
+assert.ok(Math.abs(matrix[0][1].percent+100)<1e-10);assert.equal(matrix[0][1].count,4);assert.equal(matrix[0][1],matrix[1][0]);
+assert.equal(matrix[0][0].percent,100);
+assert.equal(M.priceReturns([rising[0],rising[2],rising[3]],4*M.HOUR).length,1);
+const sparse=M.correlationMatrix([{price:rising.slice(0,2)},{price:falling}],4*M.HOUR,0,99*M.HOUR);
+assert.equal(sparse[0][1].percent,null);assert.equal(sparse[0][1].count,1);
+const levels=M.correlationMatrix([{price:rising},{price:falling}],4*M.HOUR,0,99*M.HOUR,'levels');assert.equal(levels[0][1].count,5);
+console.log('JS: nine shared assets and freely selectable comparisons, inverse returns, symmetric matrix, no missing-candle bridging, minimum sample and level/return modes OK');
+
+const legacyFunding=[8,16,24].map(h=>({time:h*M.HOUR,fundingRate:.0008,intervalHours:8}));
+assert.equal(M.aggregateFunding(legacyFunding,4).length,0);assert.equal(M.aggregateFunding(legacyFunding,24).length,1);assert.ok(Math.abs(M.aggregateFunding(legacyFunding,24)[0].value-.24)<1e-12);assert.ok(Math.abs(M.fundingStats(legacyFunding).annualized-87.6)<1e-10);assert.equal(M.fundingStats(legacyFunding).hours,24);
+console.log("JS: legacy 8-hour BTC funding preserves payment sums, weights annualization by covered hours and never invents 4-hour rates OK");
+
+const newLabels={en:"Strongest same-direction moves",fr:"Mouvements les plus similaires",zh:"最强同向变动",ko:"가장 강한 같은 방향 움직임",ja:"同方向の動きが強い組み合わせ",it:"Movimenti più simili",es:"Movimientos más similares"};
+for(const [language,text] of Object.entries(newLabels)){langContext.testI18n.set(language);assert.equal(langContext.testI18n.translate("Mouvements les plus similaires"),text);}
+console.log("JS: positive-ranking labels translated in all seven languages OK");

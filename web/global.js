@@ -1,0 +1,39 @@
+'use strict';
+function createGlobalView({math,catalog,translate,format,date,escape}){
+ const $=s=>document.querySelector(s);let cache=null,cells=null,series=[],mode='returns';
+ function showCell(i,j){
+  if(!cells)return;const c=cells[i][j],names=series[i].name+' / '+series[j].name;
+  $('#matrix-detail').textContent=names+' · '+(c.percent===null?translate('Données insuffisantes'):format(c.percent,2)+' %')+' · '+c.count+' '+translate('observations appariées')+(c.first?' · '+date(c.first)+' → '+date(c.last):'');
+ }
+ function render(history,frame,days){
+  if(!history||document.hidden)return;
+  const span=frame==='4h'?4*math.HOUR:24*math.HOUR;
+  if(!cache||cache.history!==history||cache.frame!==frame||cache.days!==days||cache.mode!==mode){
+   series=catalog.keys.map(m=>({market:m,name:catalog.assets[m].name,price:history.markets[m][frame==='4h'?'close4h':'close1d'].rows.map(r=>({time:r.time,value:r.close}))}));
+   const nonempty=series.filter(s=>s.price.length),end=nonempty.length?Math.max(...nonempty.map(s=>s.price.at(-1).time)):0;
+   const start=days?end-days*24*math.HOUR:nonempty.length?Math.min(...nonempty.map(s=>s.price[0].time))-1:0;
+   cells=math.correlationMatrix(series,span,start,end,mode);cache={history,frame,days,mode};
+  }
+  const label=translate(mode==='returns'?'Variations de prix (%)':'Niveaux de clôture');
+  $('#matrix-method').textContent=label+' · '+(frame==='4h'?'4H':'Daily')+' · '+translate(days?days+' jours':'Tout l’historique');
+  $('#matrix-explanation').textContent=translate(mode==='returns'?'Pearson sur les variations entre clôtures consécutives. Rouge : mouvements opposés ; vert : même sens.':'Pearson sur les niveaux de clôture. Des tendances communes peuvent dominer ce résultat.');
+  let html='<table class="matrix-table"><caption class="sr-only">'+escape(label)+'</caption><thead><tr><th scope="col">'+translate('Actif')+'</th>'+series.map(s=>'<th scope="col">'+escape(s.name)+'</th>').join('')+'</tr></thead><tbody>';
+  for(let i=0;i<series.length;i++){
+   html+='<tr><th scope="row">'+escape(series[i].name)+'</th>';
+   for(let j=0;j<series.length;j++){
+    const c=cells[i][j],p=c.percent,shade=p===null?'matrix-na':(p<0?'matrix-negative-':'matrix-positive-')+Math.round(Math.abs(p)/10);
+    const text=p===null?'—':format(p,1)+' %',title=series[i].name+' / '+series[j].name+' · '+text+' · '+c.count+' '+translate('observations appariées')+(c.first?' · '+date(c.first)+' → '+date(c.last):'');
+    html+=`<td><button class="matrix-cell ${shade}" data-i="${i}" data-j="${j}" title="${escape(title)}" aria-label="${escape(title)}">${text}<small>${i===j?'—':c.count+' '+translate('points')}</small></button></td>`;
+   }html+='</tr>';
+  }
+  $('#matrix').innerHTML=html+'</tbody></table>';
+  $('#matrix').querySelectorAll('button').forEach(b=>{const show=()=>showCell(Number(b.dataset.i),Number(b.dataset.j));b.onfocus=show;b.onmouseenter=show;b.onclick=show;});
+  const negative=[],positive=[];for(let i=0;i<series.length;i++)for(let j=i+1;j<series.length;j++)if(cells[i][j].percent!==null){const c={i,j,...cells[i][j]};if(c.percent<0)negative.push(c);else if(c.percent>0)positive.push(c);}
+  negative.sort((a,b)=>a.percent-b.percent);positive.sort((a,b)=>b.percent-a.percent);
+  const ranking=(list,same)=>list.length?list.slice(0,6).map(c=>`<div class="inverse-row${same?' same-direction':''}"><span>${escape(series[c.i].name+' / '+series[c.j].name)}</span><div class="inverse-track"><svg viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true"><rect width="${Math.abs(c.percent)}" height="10" rx="3"/></svg></div><b>${same?'+':''}${format(c.percent,1)} %</b><small>${c.count} ${translate('points')}</small></div>`).join(''):'<p class="hint">'+translate(same?'Aucune corrélation positive mesurée sur cette période.':'Aucune corrélation négative mesurée sur cette période.')+'</p>';
+  $('#inverse-pairs').innerHTML=ranking(negative,false);$('#positive-pairs').innerHTML=ranking(positive,true);
+  $('#matrix-detail').textContent=translate('Survolez ou sélectionnez une case pour voir sa couverture.');
+ }
+ $('#correlation-mode').onchange=()=>{mode=$('#correlation-mode').value;onChange();};
+ let onChange=()=>{};return {render,setChange(fn){onChange=fn;},invalidate(){cache=null;cells=null;series=[];}};
+}

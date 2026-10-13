@@ -53,8 +53,8 @@ async function testInterface(){
  const requests={},calculations={},writes={};let timerId=0,rafId=0,canvasResizes=0,revision=1,hours=72,accountReady=false,accountVersion=0;
  const context2d=new Proxy({measureText:text=>({width:text.length*6})},{get:(target,key)=>target[key]||(()=>{})});
  function element(id){if(elements.has(id))return elements.get(id);let html='',width=0,height=0;
-  const el={id,value:'',checked:false,disabled:false,style:{},dataset:{},events:{},parentElement:{},textContent:'',offsetWidth:180,offsetHeight:100,className:'',classList:{toggle(){}},
-   getBoundingClientRect:()=>({x:0,y:0,left:0,top:0,width:600,height:300}),addEventListener:(name,fn)=>el.events[name]=fn,setPointerCapture(){},getContext:()=>context2d,append(){}};
+  const el={id,value:'',checked:false,disabled:false,style:{},dataset:{},events:{},parentElement:{},textContent:'',offsetWidth:180,offsetHeight:100,className:'',hidden:false,classList:{toggle(){},contains(){return false;}},
+   getBoundingClientRect:()=>({x:0,y:0,left:0,top:0,width:600,height:300}),addEventListener:(name,fn)=>el.events[name]=fn,setPointerCapture(){},getContext:()=>context2d,append(){},setAttribute(){},closest:()=>element('chart-card'),querySelector:()=>element('legend-item'),querySelectorAll:()=>[]};
   Object.defineProperty(el,'innerHTML',{get:()=>html,set:value=>{html=value;writes[id]=(writes[id]||0)+1;}});
   Object.defineProperty(el,'width',{get:()=>width,set:value=>{width=value;canvasResizes++;}});Object.defineProperty(el,'height',{get:()=>height,set:value=>{height=value;canvasResizes++;}});
   elements.set(id,el);if(['funding','price','combined'].includes(id))el.nextElementSibling=element(id+'-tip');return el;
@@ -62,9 +62,9 @@ async function testInterface(){
  for(const id of ['range','timezone','language','overlays','funding','price','combined'])element(id);
  element('range').value='30';element('timezone').value='UTC';element('language').value='en';element('overlays').checked=true;
  const frames=['4h','1d'].map(frame=>{const el=element('frame-'+frame);el.dataset.frame=frame;return el;});
- function fixture(){const data={schemaVersion:1,lastSuccessfulSync:hours*math.HOUR,markets:{}};
-  for(const [i,m] of ['BRENTOIL','WTIOIL'].entries()){const market={price4hReachesFundingStart:true};
-   for(const [name,span] of [['fundingHourly',1],['close4h',4],['close1d',24]]){const rows=Array.from({length:Math.floor(hours/span)},(_,j)=>({time:(j+1)*span*math.HOUR,...(name==='fundingHourly'?{fundingRate:.00001*(i+1)}:{close:100+(j+1)*(i+1)})}));market[name]={rows,count:rows.length,firstTime:rows[0]?.time||0,lastTime:rows.at(-1)?.time||0,missingRanges:[]};}
+ function fixture(){const data={schemaVersion:2,lastSuccessfulSync:hours*math.HOUR,markets:{}};
+  for(const [i,m] of require('../web/catalog.js').keys.entries()){const market={price4hReachesFundingStart:true};
+   for(const [name,span] of [['fundingHourly',1],['close4h',4],['close1d',24]]){const rows=Array.from({length:Math.floor(hours/span)},(_,j)=>({time:(j+1)*span*math.HOUR,...(name==='fundingHourly'?{fundingRate:.00001*(i+1)}:{close:100+i*10+j*.3+(i===8?-10:10)*Math.sin(j)})}));market[name]={rows,count:rows.length,firstTime:rows[0]?.time||0,lastTime:rows.at(-1)?.time||0,missingRanges:[]};}
    data.markets[m]=market;
   }return data;
  }
@@ -76,13 +76,13 @@ async function testInterface(){
   if(path==='/api/account')return response(200,{address:'0x1111111111111111111111111111111111111111',scannedAt:hours*math.HOUR,accountCount:1,errors:[],positions:[{market:'BRENTOIL',name:'Test account',account:'0x1111111111111111111111111111111111111111',size:'1',entryPrice:'100',liquidationPrice:'80',fundingPaidSinceOpen:'-2'}]});
   throw Error('Unexpected request '+path);
  };
- const instrumented={...math};for(const name of ['aggregateFunding','fundingStats','correlation','positionSummary'])instrumented[name]=(...args)=>{calculations[name]=(calculations[name]||0)+1;return math[name](...args);};
- const document={hidden:false,querySelector:selector=>element(selector.slice(1)),querySelectorAll:()=>frames,createElement:()=>element('created-'+Math.random()),addEventListener:(name,fn)=>documentEvents[name]=fn};
+ const instrumented={...math};for(const name of ['aggregateFunding','fundingStats','correlation','positionSummary','correlationMatrix'])instrumented[name]=(...args)=>{calculations[name]=(calculations[name]||0)+1;return math[name](...args);};
+ const document={hidden:false,querySelector:selector=>element(selector.slice(1)),querySelectorAll:selector=>selector==='[data-frame]'?frames:[],createElement:()=>element('created-'+Math.random()),addEventListener:(name,fn)=>documentEvents[name]=fn};
  const i18n={lang:'en',locale:'en-GB',translate:text=>String(text),tree(){},set(value){this.lang=value;this.locale=value==='fr'?'fr-FR':'en-GB';}};
- const context={OilMath:instrumented,OilUpdates:{createHistoryClient,createPoller},OilI18n:i18n,fetch:fakeFetch,document,window:{devicePixelRatio:1,addEventListener:(name,fn)=>windowEvents[name]=fn},
+ const context={OilMath:instrumented,OilUpdates:{createHistoryClient,createPoller},OilI18n:i18n,fetch:fakeFetch,document,window:{location:{hash:'#monitor/BRENTOIL/WTIOIL'},scrollTo(){},devicePixelRatio:1,addEventListener:(name,fn)=>windowEvents[name]=fn},
   ResizeObserver:class{constructor(fn){this.fn=fn;resizeCallbacks.push(fn);}observe(){this.fn();}},requestAnimationFrame:fn=>{const id=++rafId;rafs.set(id,fn);return id;},cancelAnimationFrame:id=>rafs.delete(id),
   setTimeout:(fn,ms)=>{const id=++timerId;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id),AbortController,DOMException,console};
- vm.createContext(context);vm.runInContext(fs.readFileSync(require.resolve('../web/updates.js'),'utf8'),context);vm.runInContext(fs.readFileSync(require.resolve('../web/app.js'),'utf8'),context);
+ vm.createContext(context);vm.runInContext(fs.readFileSync(require.resolve('../web/updates.js'),'utf8'),context);vm.runInContext(fs.readFileSync(require.resolve('../web/catalog.js'),'utf8'),context);vm.runInContext(fs.readFileSync(require.resolve('../web/global.js'),'utf8'),context);vm.runInContext(fs.readFileSync(require.resolve('../web/app.js'),'utf8'),context);
  function draw(){const batch=[...rafs.values()];rafs.clear();for(const callback of batch)callback();}
  async function tick(){assert.equal(timers.size,1);const timer=[...timers.values()][0];await timer.fn();await settle();draw();}
  await settle();draw();assert.equal(requests['/api/history'],1);assert.equal(requests['/api/startup'],1);
@@ -97,7 +97,14 @@ async function testInterface(){
  element('address').value='0x1111111111111111111111111111111111111111';await element('account-form').onsubmit({preventDefault(){}});await settle();draw();assert.equal(requests['/api/account'],2);
  const positionCalculations=calculations.positionSummary;await tick();draw();assert.equal(requests['/api/account'],2);assert.equal(calculations.positionSummary,positionCalculations);
  await element('clear').onclick();await settle();draw();assert.equal(element('positions').innerHTML,'');
+ const catalog=require('../web/catalog.js');const transfers=requests['/api/history'];
+ for(let i=0;i<catalog.keys.length;i++)for(let j=i+1;j<catalog.keys.length;j++){const chosen=[catalog.keys[i],catalog.keys[j]];context.window.location.hash='#monitor/'+chosen.join('/');windowEvents.hashchange();draw();for(const market of chosen)assert.ok(element('metrics').innerHTML.includes(catalog.assets[market].name));assert.equal(element('home-view').hidden,true);}
+ context.window.location.hash='#global';windowEvents.hashchange();draw();assert.equal(element('global-view').hidden,false);for(const asset of catalog.keys)assert.ok(element('matrix').innerHTML.includes(catalog.assets[asset].name.replace(/&/g,'&amp;')));
+ assert.ok(element('positive-pairs').innerHTML.includes('same-direction'));assert.ok(element('inverse-pairs').innerHTML.includes('inverse-row'));assert.ok(!element('matrix').innerHTML.includes('style='));const matrixCalls=calculations.correlationMatrix;await tick();assert.equal(calculations.correlationMatrix,matrixCalls);assert.equal(requests['/api/history'],transfers);element('correlation-mode').value='levels';element('correlation-mode').onchange();assert.equal(calculations.correlationMatrix,matrixCalls+1);
+ context.window.location.hash='#home';windowEvents.hashchange();draw();assert.equal(element('home-view').hidden,false);assert.equal(element('monitor-content').hidden,true);assert.equal((element('market-cards').innerHTML.match(/class=\"market-card/g)||[]).length,2);
+ const homeCalculations={...calculations};await tick();assert.deepEqual(calculations,homeCalculations);assert.equal(requests['/api/history'],transfers);
  document.hidden=true;documentEvents.visibilitychange();
+ console.log('Interface: all 36 freely selected comparisons, two ranking tables, global matrix, home navigation and no duplicated history transfers OK');
  console.log('Interface: ten idle polls cause no history transfer, statistics recalculation or card rewrites; hidden tab/return, cached frame/locale/positions and coalesced canvas drawing OK');
 }
 (async()=>{await testHistory();await testPoller();await testInterface();})().catch(error=>{console.error(error);process.exitCode=1;});

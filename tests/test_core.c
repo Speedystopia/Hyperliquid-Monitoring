@@ -15,6 +15,19 @@ int main(void) {
     json=database_json(&db);text=cJSON_PrintUnformatted(json);cJSON_Delete(json);
     assert(database_load(&copy,text));assert(copy.markets[0].funding.count==3);
     assert(copy.markets[0].funding.points[1].value==-0.0002);
+    assert(OIL_MARKET_COUNT==9 && !strcmp(OIL_COINS[4],"BTC"));
+    json=cJSON_Parse(text);cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(json,"schemaVersion"),1);
+    {int i;cJSON *m=cJSON_GetObjectItemCaseSensitive(json,"markets");for(i=2;i<OIL_MARKET_COUNT;i++)cJSON_DeleteItemFromObjectCaseSensitive(m,OIL_NAMES[i]);}
+    {char *legacy=cJSON_PrintUnformatted(json);assert(database_load(&copy,legacy));free(legacy);}
+    assert(copy.markets[0].funding.count==3 && !copy.markets[4].funding.count);cJSON_Delete(json);
+    json=database_json(&copy);assert(cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(json,"markets"))==OIL_MARKET_COUNT);cJSON_Delete(json);
+    puts("C: lossless legacy migration to nine shared assets, native BTC and canonical API aliases OK");
+    {Series native={0};Point n={0};n.value=0.0008;n.time=BTC_HOURLY_START-9*HOUR_MS;n.sourceTime=n.time;assert(series_put(&native,n));
+    n.time+=8*HOUR_MS;n.sourceTime=n.time;assert(series_put(&native,n));n.time+=HOUR_MS;n.sourceTime=n.time;assert(series_put(&native,n));
+    gaps=funding_gaps(&native,n.time,1);assert(!cJSON_GetArraySize(gaps));cJSON_Delete(gaps);
+    n.time+=2*HOUR_MS;n.sourceTime=n.time;assert(series_put(&native,n));gaps=funding_gaps(&native,n.time,1);assert(cJSON_GetArraySize(gaps)==1);
+    assert(cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(gaps,0),"count")->valuedouble==1);cJSON_Delete(gaps);free(native.points);
+    puts("C: BTC historical 8h/hourly transition produces no invented gaps; a real missing hourly payment remains recoverable OK");}
     free(text);assert(!database_load(&copy,"{\"schemaVersion\":9}"));assert(copy.markets[0].funding.count==3);
     assert(address_valid("0x1111111111111111111111111111111111111111"));assert(!address_valid("0xnot-an-address"));
     assert(oil_collection_delay(5*HOUR_MS+59000,4,0)==1000);

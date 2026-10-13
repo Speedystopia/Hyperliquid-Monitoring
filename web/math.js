@@ -16,8 +16,8 @@
  function received(rows){let sum=0n;for(const r of rows){const n=decimal(r.fundingPaidSinceOpen);if(n===null)return null;sum-=n;}return sum;}
  function aggregateFunding(rows,hours){
   const span=hours*HOUR,map=new Map();
-  for(const r of rows){const end=Math.ceil(r.time/span)*span;let b=map.get(end);if(!b){b={time:end,value:0,seen:new Set()};map.set(end,b);}if(!b.seen.has(r.time)){b.value+=r.fundingRate;b.seen.add(r.time);}}
-  return [...map.values()].filter(b=>b.seen.size===hours).map(b=>({time:b.time,value:b.value*100})).sort((a,b)=>a.time-b.time);
+  for(const r of rows){const interval=r.intervalHours||1,end=Math.ceil(r.time/span)*span;let b=map.get(end);if(!b){b={time:end,value:0,hours:0,seen:new Set(),valid:true};map.set(end,b);}if(!b.seen.has(r.time)){b.value+=r.fundingRate;b.hours+=interval;b.valid&&=r.time-interval*HOUR>=end-span;b.seen.add(r.time);}}
+  return [...map.values()].filter(b=>b.valid&&b.hours===hours).map(b=>({time:b.time,value:b.value*100})).sort((a,b)=>a.time-b.time);
  }
  function positionSummary(positions,market){const rows=positions.filter(p=>p.market===market);return {rows,entry:weighted(rows,'entryPrice'),liquidation:weighted(rows,'liquidationPrice'),funding:received(rows),long:weighted(rows.filter(r=>decimal(r.size)>0n),'entryPrice'),short:weighted(rows.filter(r=>decimal(r.size)<0n),'entryPrice')};}
  function indexAfter(rows,time){let low=0,high=rows.length;while(low<high){const middle=(low+high)>>>1;if(rows[middle].time<=time)low=middle+1;else high=middle;}return low;}
@@ -29,11 +29,11 @@
   return {latest,average:selected.reduce((total,r)=>total+r.value,0)/selected.length,change:baseline.value>0?(latest.value/baseline.value-1)*100:null,count:selected.length};
  }
  function fundingStats(rows){
-  if(!rows.length)return {annualized:null,total:null,rolling:null,count:0,days:0,partial:true};
-  const latest=rows.at(-1).time,cutoff=latest-365*24*HOUR;let total=0,rolling=0;
-  for(const r of rows){total+=r.fundingRate;if(r.time>cutoff)rolling+=r.fundingRate;}
-  const duration=latest-rows[0].time+HOUR;
-  return {annualized:total/rows.length*365*24*100,total:total*100,rolling:rolling*100,count:rows.length,days:duration/(24*HOUR),partial:duration<365*24*HOUR};
+  if(!rows.length)return {annualized:null,total:null,rolling:null,count:0,hours:0,days:0,partial:true};
+  const latest=rows.at(-1).time,cutoff=latest-365*24*HOUR;let total=0,rolling=0,hours=0;
+  for(const r of rows){total+=r.fundingRate;hours+=r.intervalHours||1;if(r.time>cutoff)rolling+=r.fundingRate;}
+  const duration=latest-rows[0].time+(rows[0].intervalHours||1)*HOUR;
+  return {annualized:total/hours*365*24*100,total:total*100,rolling:rolling*100,count:rows.length,hours,days:duration/(24*HOUR),partial:duration<365*24*HOUR};
  }
  function correlation(a,b){
   const byTime=new Map(b.map(p=>[p.time,p.value]));let n=0,meanX=0,meanY=0,xx=0,yy=0,xy=0,first=null,last=null;
@@ -42,6 +42,21 @@
   }
   return {percent:n>=2&&xx>0&&yy>0?Math.max(-1,Math.min(1,xy/Math.sqrt(xx*yy)))*100:null,count:n,first,last};
  }
- const api={HOUR,SCALE,decimal,fixed,weighted,received,aggregateFunding,positionSummary,fundingStats,correlation,selectWindow,priceStats,indexAfter};
+ function priceReturns(rows,span){
+  const out=[];for(let i=1;i<rows.length;i++){const a=rows[i-1],b=rows[i];
+   if(b.time-a.time===span&&Number.isFinite(a.value)&&a.value>0&&Number.isFinite(b.value))out.push({time:b.time,value:(b.value/a.value-1)*100});
+  }return out;
+ }
+ function correlationMatrix(series,span,start,end,mode='returns'){
+  // A return uses only adjacent native candles, never bridges a missing interval.
+  const selected=series.map(s=>selectWindow(mode==='returns'?priceReturns(s.price,span):s.price,start,end));
+  const cells=series.map(()=>Array(series.length));
+  for(let i=0;i<series.length;i++)for(let j=i;j<series.length;j++){
+   const result=correlation(selected[i],selected[j]);if(result.count<3)result.percent=null;
+   cells[i][j]=result;cells[j][i]=result;
+  }
+  return cells;
+ }
+ const api={HOUR,SCALE,decimal,fixed,weighted,received,aggregateFunding,positionSummary,fundingStats,correlation,selectWindow,priceStats,indexAfter,priceReturns,correlationMatrix};
  if(typeof module!=='undefined')module.exports=api;else root.OilMath=api;
 })(globalThis);

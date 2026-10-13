@@ -1,6 +1,26 @@
 # Oil Perps Hyperliquid
 
-A portable Windows application for Brent (`xyz:BRENTOIL`) and WTI (`xyz:CL`, displayed as **WTIOIL**) funding history and closing prices. The collector, storage layer, and local server are written in **C17** and compiled with Microsoft Visual C. The local HTML/CSS/JavaScript interface uses no external libraries, CDN, or hosting service.
+A portable Windows application for funding history, closing prices, positions and correlations across **nine Hyperliquid assets**. The collector, storage layer, and local server are written in **C17** and compiled with Microsoft Visual C. The local HTML/CSS/JavaScript interface uses no external libraries, CDN, or hosting service.
+
+## Three views, any two assets
+
+- **Home** provides cards opening the selected comparison or the global correlation map.
+- **Monitoring** shows funding, prices, the four-curve combined chart, historical indicators and positions for the two assets chosen in the header. Both selectors contain all nine assets; identical selections are disabled. This allows 36 distinct comparisons, including the eight originally requested combinations.
+- **Global correlations** compares every asset with every other one in a colored matrix. Red denotes opposite movements and green the same direction. Separate ranked tables show the strongest negative and positive correlations, excluding self-correlations and duplicate pairs.
+
+| Display name | Canonical API coin | Hyperliquid market |
+| --- | --- | --- |
+| Brent | `xyz:BRENTOIL` | [BRENTOIL](https://app.hyperliquid.xyz/trade/xyz:BRENTOIL) |
+| WTI | `xyz:CL` | [WTIOIL](https://app.hyperliquid.xyz/trade/xyz:WTIOIL) |
+| Diesel | `xyz:HO` | [DIESEL](https://app.hyperliquid.xyz/trade/xyz:DIESEL) |
+| Natural Gas | `xyz:NATGAS` | [NATGAS](https://app.hyperliquid.xyz/trade/xyz:NATGAS) |
+| BTC | `BTC` | [BTC](https://app.hyperliquid.xyz/trade/BTC) |
+| MSTR | `xyz:MSTR` | [MSTR](https://app.hyperliquid.xyz/trade/xyz:MSTR) |
+| Gold | `xyz:GOLD` | [GOLD](https://app.hyperliquid.xyz/trade/xyz:GOLD) |
+| EUR/USD | `xyz:EUR` | [EURUSD](https://app.hyperliquid.xyz/trade/xyz:EURUSD) |
+| S&P 500 | `xyz:SP500` | [SP500](https://app.hyperliquid.xyz/trade/xyz:SP500) |
+
+Collection is shared: BTC, Brent and EUR/USD are downloaded once, regardless of the comparison. URL fragments select one of the three views. Existing two-market JSON files are migrated to schema version 2 without removing Brent/WTI rows, and the embedded seed supplies the seven new assets immediately.
 
 ## Run: one executable
 
@@ -24,7 +44,7 @@ The collector waits for the next collection deadline or an explicit request, wit
 
 While the tab is visible, the interface checks a small status response every 15 seconds when idle and every two seconds during collection or an account scan. It downloads and parses the history JSON only when the stored snapshot version changes. Conditional requests use an ETag; an unchanged response is HTTP 304 with no JSON body. Account results are downloaded only when their version changes.
 
-When the tab is hidden, polling stops, in-flight requests are cancelled, and chart rendering is suspended. Returning to the tab checks for updates immediately. Funding aggregates, period statistics, position levels, and number/date formatters are reused until their inputs change. Canvas redraws are coalesced to animation frames, and backing buffers are resized only when chart dimensions change.
+When the tab is hidden, polling stops, in-flight requests are cancelled, and chart rendering is suspended. Returning to the tab checks for updates immediately. Funding aggregates are shared per asset and interval, rather than copied per comparison. Period statistics, position levels, and number/date formatters are reused until their inputs change. Only the visible view is recalculated; outdated history caches are released when the data changes. Canvas redraws are coalesced to animation frames, and backing buffers are resized only when chart dimensions change.
 
 After scanning an address, the backend continues refreshing positions every minute until the address is cleared or the collector exits, including while the tab is hidden or closed. Market collection likewise continues independently of the interface. Browser memory and processing remain additional to the collector's own usage. Usage depends on history size, the browser, account scanning, and synchronization; there is no fixed CPU or memory guarantee.
 
@@ -33,9 +53,9 @@ After scanning an address, the backend continues refreshing positions every minu
 - **data/history.json** stores the public market histories. An initial download is embedded in the executable and updated automatically.
 - Collection runs at startup and every hour at **HH:01 UTC**. This is also minute 01 in time zones with whole-hour offsets, including Europe/Paris. A network failure or a latest payment that has not yet appeared triggers another attempt within five minutes.
 - After shutdown, sleep, or a network interruption, missing intervals are requested again. All previously downloaded observations are retained.
-- The source funding data is hourly because the API has no native 4H/1D funding endpoint. Pagination retrieves the available history from the first payment, without a local 500-observation limit.
-- **4H** and **Daily** funding charts sum 4 or 24 hourly rates respectively. Chart values are not annualized or compounded. A period with a missing payment is not shown as complete.
-- Prices are **native 4H and 1D closing prices**. Open candles are excluded. The API exposes the latest 5,000 candles per interval. At the initial download, 4H prices reached the beginning of both markets' funding histories. A future installation more than 5,000 periods after market launch may have a shorter recoverable price history.
+- Current funding data is hourly; the API has no native 4H/1D funding endpoint. Pagination retrieves the available history from the first payment, without a local 500-observation limit. Early BTC history uses eight-hour settlements before 2023-06-08 01:00 UTC. Each payment includes `intervalHours` (8 or 1).
+- **4H** and **Daily** funding charts sum payments covering 4 or 24 hours respectively. Legacy eight-hour BTC payments can form Daily periods but are never split into invented 4H rates. Chart values are not annualized or compounded. A period with a missing payment is not shown as complete.
+- Prices are **native 4H and 1D closing prices**. Open candles are excluded. The API exposes the latest 5,000 candles per interval. BTC already has a longer recoverable Daily history than 4H history; older 4H prices cannot be downloaded through this endpoint. Diesel's currently available history starts in October 2026. Coverage is shown separately for each asset and interval; older local archives can retain data that a new installation cannot recover.
 - Timestamps are UTC Unix milliseconds and represent the **end** of a period. The actual funding payment timestamp is also retained in `sourceTime`; `time` is rounded down to the hour to align payments with closes.
 - Each series provides its observation count, coverage, and `missingRanges`. Missing values are never interpolated. Gaps older than the API's retention remain reported, without fabricated prices.
 
@@ -55,7 +75,7 @@ The interface defaults to English. The selector provides English, French, Simpli
 
 A light dashed **0% · zero funding** line appears on the funding chart and the combined chart.
 
-The language selector is centered in the header. The manual synchronization button sits beside the collector status. **Brent ↗** and **WTI ↗** in the price cards link to their Hyperliquid markets.
+The language selector is centered in the header. The manual synchronization button sits beside the collector status. The selected assets' price cards link to their Hyperliquid markets.
 
 Three synchronized charts show funding for both markets, closing prices for both markets, and all four curves overlaid. The combined chart uses funding percentages on the left axis and USD prices on the right; price curves are dashed. Choose 4H/Daily, 7/30/90 days or full history, and UTC or local time. Scroll to zoom, drag to pan, hover to inspect values, and double-click to reset.
 
@@ -63,13 +83,19 @@ Three synchronized charts show funding for both markets, closing prices for both
 
 Cards and indicators recalculate whenever the JSON changes and whenever **7 / 30 / 90 days / full history** is selected. The period selector determines the data used by these cards; manual chart zoom only changes the charts. Funding includes hourly payments through the latest retrieved payment. Price cards retain the latest close and add the average close and price change for the selected period.
 
-- **Realized funding annualized** = the average hourly funding rate over the selected period × 8,760 × 100. It describes an annual pace calculated from past payments, not a payment actually received over an entire year. Positive market funding rates represent funding paid by a long and received by a short.
-- **Funding sum over the last 12 months**, available under **Data coverage & methodology**, sums realized hourly rates over the 365 days ending at the latest payment. Initial history is shorter than one year, so coverage is explicitly marked partial. The main cards show cumulative funding and observed duration for the selected period.
-- **Price correlation** = Pearson's correlation coefficient × 100 for Brent/WTI closes with matching timestamps in the selected period, using 4H or Daily according to the selection. Periods before Brent's launch are excluded because there is no Brent price. −100% is a perfect inverse linear relationship; +100% is a perfect positive relationship. This measures price levels, not returns. The sample size and matched dates are shown. Constant series or insufficient data return no value.
+- **Realized funding annualized** = sum of funding rates ÷ hours covered by those payments × 8,760 × 100. For current hourly payments this equals the average hourly rate; legacy BTC payments cover eight hours each. It describes an annual pace calculated from past payments, not a payment actually received over an entire year. Positive market funding rates represent funding paid by a long and received by a short.
+- **Funding sum over the last 12 months**, available under **Data coverage & methodology**, sums realized payments over the 365 days ending at the latest payment. Coverage shorter than one year is explicitly marked partial. The main cards show cumulative funding and observed duration for the selected period.
+- **Price correlation** = Pearson's correlation coefficient × 100 for the selected assets' closes with matching timestamps in the selected period, using 4H or Daily according to the selection. Dates missing either asset's price are excluded. −100% is a perfect inverse linear relationship; +100% is a perfect positive relationship. This measures price levels, not returns. The sample size and matched dates are shown. Constant series or insufficient data return no value.
+
+## Global correlation method
+
+The global page follows the same 4H/Daily and 7/30/90-day/full-history controls. Its default **Price changes (%)** mode computes Pearson correlation on percentage changes between consecutive native closes. Changes spanning a missing candle are excluded. Optional **Closing price levels** mode matches the monitor's correlation card; common trends can dominate correlations of price levels.
+
+Every matrix cell uses only timestamps shared by its two assets, with at least three matched observations and nonconstant values. Hover, focus or select a cell to see its sample count and dates. Coverage can differ between cells, especially for recent listings. Both ranked tables use the selected method and period and update with new candles. They exclude diagonal/self comparisons and duplicate pairs. Correlation describes the retrieved historical data and does not predict future movements.
 
 ## Account positions
 
-Enter a **public address** in the empty field and click **Scan account**. The app reads open positions on the `xyz` DEX for the main account and its subaccounts, then refreshes every minute. Position funding is shown only for the two oil markets.
+Enter a **public address** in the empty field and click **Scan account**. The app reads native Hyperliquid positions (including BTC) and positions on the `xyz` DEX for the main account and its subaccounts, then refreshes every minute. The monitor shows its two selected assets; changing assets reuses the scan and updates averages, funding and overlays.
 
 - Average entry price is weighted by **absolute position size**. Long and short entry averages are also shown separately when both directions coexist. Their combined average is not a break-even price for a net position.
 - Net funding in USDC is measured **since the opening of positions that are still open**, summed across accounts. Positive means received; negative means paid. The value comes from `-cumFunding.sinceOpen`; this convention was compared with `userFunding.delta.usdc` payments. It is separate from market funding rates and from funding for previously closed positions.
@@ -99,6 +125,7 @@ Repository layout: `src/` contains the C collector and Windows integration; `web
 - [Hyperliquid info API: pagination, candles, and subaccounts](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint)
 - [Hyperliquid perps API: funding and position state](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/perpetuals)
 - [`meta` for the xyz DEX](https://api.hyperliquid.xyz/info): POST `{"type":"meta","dex":"xyz"}` returns canonical market names.
+- [Reproducible funding cadence study](https://github.com/molinamanlio/perp-funding-study): its BTC eight-hour/hourly transition and three omitted historical hourly settlements are reproduced by the downloaded API timestamps.
 - [cJSON v1.7.19](https://github.com/DaveGamble/cJSON/releases/tag/v1.7.19)
 
 The repository and package distribute only software and public market data. The software uses the MIT license; the third-party license is retained in `vendor/LICENSE.cJSON` and embedded in the executable.

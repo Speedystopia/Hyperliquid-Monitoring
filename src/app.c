@@ -95,12 +95,24 @@ static char *read_file(const char *path,size_t *length) {
 }
 static int load_data(void) {
     char *s=read_file("data/history.json",NULL);int existed=GetFileAttributesW(L"data/history.json")!=INVALID_FILE_ATTRIBUTES;
-    if(s && database_load(&db,s)){free(s);return 1;}free(s);
+    if(s && database_load(&db,s)){
+        int legacy=db.loadedSchema==1,upgrade=legacy || db.loadedFundingSchedule!=1;
+        free(s);
+        if(legacy){
+            Database seed={0};int i;char *embedded=resource_text(OIL_SEED,NULL);
+            if(embedded && database_load(&seed,embedded))for(i=2;i<OIL_MARKET_COUNT;i++){
+                Market *m=&db.markets[i];
+                if(!m->funding.count && !m->close4h.count && !m->close1d.count){*m=seed.markets[i];memset(&seed.markets[i],0,sizeof(Market));}
+            }
+            free(embedded);database_free(&seed);return save_data();
+        }
+        return upgrade?save_data():1;
+    }free(s);
     s=read_file("data/history.backup.json",NULL);
     if(s && database_load(&db,s)){
         free(s);oil_log("Recovered valid backup; corrupt primary retained as history.corrupt.json");
         if(existed && !MoveFileExW(L"data/history.json",L"data/history.corrupt.json",MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)) return 0;
-        return 1;
+        return save_data();
     }
     free(s);
     if(existed || GetFileAttributesW(L"data/history.backup.json")!=INVALID_FILE_ATTRIBUTES)return 0;
@@ -136,7 +148,7 @@ static DWORD WINAPI collector_thread(void *unused) {
         int64_t t=now_ms(),hour=t/HOUR_MS;int minute=(int)((t%HOUR_MS)/60000);
         if(InterlockedExchange(&requested,0) || (minute>=1 && hour!=last_hour) || (retry_at && t>=retry_at)) {
             int ok=sync_once(),fresh=1,i;
-            for(i=0;i<2;i++) {
+            for(i=0;i<OIL_MARKET_COUNT;i++) {
                 Market *m=&db.markets[i];
                 if(!m->funding.count || m->funding.points[m->funding.count-1].time<hour*HOUR_MS)fresh=0;
                 if(!m->close4h.count || m->close4h.points[m->close4h.count-1].time<t/(4*HOUR_MS)*(4*HOUR_MS))fresh=0;
@@ -249,6 +261,8 @@ static void handle_client(SOCKET s) {
     else if(!strcmp(path,"/math.js"))body=resource_text(OIL_MATH_JS,&length);
     else if(!strcmp(path,"/i18n.js"))body=resource_text(OIL_I18N_JS,&length);
     else if(!strcmp(path,"/updates.js"))body=resource_text(OIL_UPDATES_JS,&length);
+    else if(!strcmp(path,"/catalog.js"))body=resource_text(OIL_CATALOG_JS,&length);
+    else if(!strcmp(path,"/global.js"))body=resource_text(OIL_GLOBAL_JS,&length);
     else if(!strcmp(path,"/style.css"))body=resource_text(OIL_CSS,&length);
     else if(!strcmp(path,"/licenses")){
         size_t aLen=0,bLen=0;char *a=resource_text(OIL_LICENSE,&aLen),*b=resource_text(OIL_CJSON_LICENSE,&bLen);
@@ -286,7 +300,7 @@ static int run(int argc,wchar_t **argv) {
     for(i=1;i<argc;i++){if(!wcscmp(argv[i],L"--sync"))once=1;else if(!wcscmp(argv[i],L"--background"))background=1;
         else if(!wcscmp(argv[i],L"--verify-bundle")){
             Database check={0};char *seed;int id,ok;
-            for(id=OIL_HTML;id<=OIL_UPDATES_JS;id++){char *asset=resource_text(id,NULL);if(!asset)return 4;free(asset);}
+            for(id=OIL_HTML;id<=OIL_GLOBAL_JS;id++){char *asset=resource_text(id,NULL);if(!asset)return 4;free(asset);}
             seed=resource_text(OIL_SEED,NULL);ok=seed&&database_load(&check,seed);free(seed);database_free(&check);return ok?0:4;
         }
         else if(!wcscmp(argv[i],L"--install-startup"))return (int)startup_set(1);
