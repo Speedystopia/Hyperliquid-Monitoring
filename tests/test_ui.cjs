@@ -79,9 +79,56 @@ for(const language of ['en','fr','zh','ko','ja','it','es']){langContext.testI18n
 console.log('JS: inverse-correlation ranking selects same funding signs, sums received rates, shows two longs/shorts, excludes invalid pairs and translates all labels OK');
 const thresholdPairs=[{percent:66,count:5},{percent:66.001,count:5},{percent:-66,count:5},{percent:-66.001,count:5},{percent:95,count:5},{percent:NaN,count:5},{percent:99,count:2}];
 assert.deepEqual(M.selectCorrelationPairs(thresholdPairs).pairs.map(p=>p.percent),[95,66.001,-66.001]);assert.equal(M.selectCorrelationPairs(thresholdPairs).fallback,false);
-assert.deepEqual(M.selectCorrelationPairs([{percent:-62.9,count:208},{percent:-59.9,count:208}]),{pairs:[{percent:-62.9,count:208}],fallback:true});
-assert.deepEqual(M.selectCorrelationPairs([{percent:66,count:5}]),{pairs:[{percent:66,count:5}],fallback:true});
+assert.deepEqual(M.selectCorrelationPairs([{percent:-62.9,count:208},{percent:-59.9,count:208}]),{pairs:[],fallback:false});
+assert.deepEqual(M.selectCorrelationPairs([{percent:66,count:5}]),{pairs:[],fallback:false});
 assert.deepEqual(M.selectCorrelationPairs([]),{pairs:[],fallback:false});assert.equal(M.selectCorrelationPairs([{percent:0,count:5},{percent:null,count:5}]).pairs.length,0);
 assert.equal(M.selectCorrelationPairs(Array.from({length:8},(_,i)=>({percent:80+i,count:5}))).pairs.length,6);assert.equal(thresholdPairs[0].percent,66);
 for(const language of ['en','fr','zh','ko','ja','it','es']){langContext.testI18n.set(language);for(const label of ['Seuil strict : corrélation < −66 %.','Seuil strict : corrélation > +66 %.'])assert.ok(language==='fr'||langContext.testI18n.translate(label)!==label);}
-console.log('JS: strict absolute correlation >66 threshold, exact boundaries, best-only fallback, invalid/empty inputs and ranking cap OK');
+console.log('JS: strict absolute correlation >66 threshold, exact boundaries, no out-of-criteria fallback, invalid/empty inputs and ranking cap OK');
+
+const sameStats=[{annualized:-24},{annualized:-17},{annualized:5},{annualized:9},{annualized:9},{annualized:0},{annualized:NaN},{annualized:null}];
+const sameCells=sameStats.map(()=>sameStats.map(()=>({percent:-90,count:40,first:1,last:40})));
+sameCells[0][1]={percent:88,count:40};sameCells[2][3]={percent:85,count:40};sameCells[2][4]={percent:90,count:40};sameCells[3][4]={percent:95,count:40};
+for(const j of [5,6,7])sameCells[3][j]={percent:100,count:40};sameCells[0][2]={percent:99,count:40};
+assert.deepEqual(M.sameFundingPairs(sameCells,sameStats).map(p=>[p.i,p.j,p.netAnnualized,p.shortIsA]),[[3,4,0,true],[2,4,4,false],[0,1,7,false],[2,3,4,false]]);
+// Brent -24 / WTI -17: long Brent receives24 and short WTI pays17, net7.
+const oilCarry=M.sameFundingPairs(sameCells,sameStats).find(p=>p.i===0&&p.j===1);assert.equal(oilCarry.shortIsA,false);assert.equal(-sameStats[0].annualized+sameStats[1].annualized,oilCarry.netAnnualized);
+sameCells[0][1]={percent:88,count:2};assert.ok(!M.sameFundingPairs(sameCells,sameStats).some(p=>p.i===0));
+sameCells[2][3]={percent:65,count:40};assert.ok(!M.selectCorrelationPairs(M.sameFundingPairs(sameCells,sameStats)).pairs.some(p=>p.i===2&&p.j===3));
+console.log('JS: same-sign positive-correlation carry includes both-negative oil rates, positive rates and ties, and excludes zero/missing/short/out-of-threshold cases OK');
+
+const strength=[{percent:-99,count:40},{percent:75,count:40},{percent:-75,count:40},{percent:74.99,count:40},{percent:-25,count:40},{percent:25,count:40},{percent:0,count:40},{percent:10,count:40},{percent:-2,count:40},{percent:25.001,count:40},{percent:NaN,count:40},{percent:100,count:2}];
+assert.deepEqual(M.selectStrengthPairs(strength,true).map(p=>p.percent),[-99,75,-75]);
+assert.deepEqual(M.selectStrengthPairs(strength,false).map(p=>p.percent),[0,-2,10,-25,25]);
+assert.deepEqual(M.selectStrengthPairs([{percent:50,count:40}],true),[]);assert.deepEqual(M.selectStrengthPairs([{percent:50,count:40}],false),[]);
+assert.equal(M.selectStrengthPairs(Array.from({length:8},(_,i)=>({percent:-80-i,count:40})),true).length,6);
+console.log('JS: mixed-sign strong |r|>=75 and weak |r|<=25 classifications, inclusive boundaries, zero correlation, intermediate exclusion and ranking cap OK');
+
+{
+ const DAY=24*M.HOUR,keys=['A','B','C','D'],nodes=new Map();
+ const node=id=>{if(!nodes.has(id))nodes.set(id,{innerHTML:'',textContent:'',collapsed:false,classList:{toggle(){}},closest(){return this.collapsed?{}:null;},querySelectorAll(){return this.buttons=[...this.innerHTML.matchAll(/data-i="(\d+)" data-j="(\d+)"/g)].map(match=>({dataset:{i:match[1],j:match[2]}}));}});return nodes.get(id);};
+ const document={hidden:false,querySelector:id=>{assert.ok(!['#matrix-source','#correlation-mode'].includes(id),'Removed source/method controls must never be accessed');return node(id);}};
+ let matrixCalls=0,referenceCalls=0,summaryCalls=0;
+ const math={...M,correlationMatrix(...args){matrixCalls++;return M.correlationMatrix(...args);},correlation(...args){referenceCalls++;return M.correlation(...args);}};
+ const context={document,Date,Map,Number,Math,Array};vm.createContext(context);vm.runInContext(fs.readFileSync(require.resolve('../web/global.js'),'utf8')+';globalThis.factory=createGlobalView;',context);
+ const catalog={keys,assets:Object.fromEntries(keys.map(key=>[key,{name:key}]))},view=context.factory({math,catalog,research:{summary(){summaryCalls++;return '<span>Account analysis notice</span>';}},translate:s=>s,format:(n,d=2)=>Number.isFinite(n)?n.toFixed(d):'—',date:n=>'T'+n,escape:s=>String(s)});
+ const history={markets:Object.fromEntries(keys.map(key=>[key,{close1d:{rows:[]},fundingHourly:{rows:Array.from({length:40*24},(_,i)=>({time:(i+1)*M.HOUR,fundingRate:key==='D'?.00003:key==='B'?-.00001:key==='C'?-.00003:-.00002,intervalHours:1}))}}]))};
+ let price=100,inverse=120;for(let i=0;i<=40;i++){if(i){const r=.01*Math.sin(i*.73)+.005*Math.cos(i*.37);price*=1+r;inverse*=1-r;}for(const key of keys)history.markets[key].close1d.rows.push({time:i*DAY,close:key==='C'?inverse:price});}
+ const external={markets:{A:{provider:'Public A',quoteUnit:'USD',close1d:{rows:structuredClone(history.markets.A.close1d.rows)}},B:{provider:'Public B',quoteUnit:'USD',close1d:{rows:structuredClone(history.markets.C.close1d.rows).filter(r=>r.time!==10*DAY)}}}};
+ view.render(history,'4h',7,external);assert.equal(matrixCalls,1);assert.ok(referenceCalls>0);assert.ok(node('#matrix-method').textContent.includes('Daily · Tout l’historique'));
+ assert.ok(node('#same-funding-pairs').innerHTML.includes('Long A · Short B · montants égaux'));assert.ok(node('#same-funding-pairs').innerHTML.includes('Divergence de signe avec la référence externe'));
+ const button=(i,j)=>node('#matrix').buttons.find(b=>+b.dataset.i===i&&+b.dataset.j===j);
+ button(0,1).onfocus();assert.ok(node('#matrix-detail').textContent.includes('40 observations appariées'));assert.ok(node('#matrix-detail').textContent.includes('38 observations appariées'));assert.ok(node('#matrix-detail').textContent.includes('-100.00 %'));assert.ok(node('#matrix-detail').textContent.includes('Hyperliquid sur les mêmes dates : 100.00 %'));
+ button(0,2).onfocus();assert.ok(node('#matrix-detail').textContent.includes('Référence externe indisponible'));assert.ok(node('#matrix-detail').textContent.includes('0 observations appariées'));
+ const matrixInitial=matrixCalls,referenceInitial=referenceCalls,sameHtml=node('#same-funding-pairs').innerHTML;
+ const fundingChanged=structuredClone(history);for(const r of fundingChanged.markets.A.fundingHourly.rows)r.fundingRate*=2;
+ view.render(fundingChanged,'1d',0,external);assert.equal(matrixCalls,matrixInitial);assert.equal(referenceCalls,referenceInitial);assert.notEqual(node('#same-funding-pairs').innerHTML,sameHtml);
+ const metadataChanged=structuredClone(external);metadataChanged.markets.A.provider='Updated public A';view.render(fundingChanged,'1d',0,metadataChanged);assert.equal(matrixCalls,matrixInitial);assert.equal(referenceCalls,referenceInitial);
+ const externalChanged=structuredClone(metadataChanged);externalChanged.markets.B.close1d.rows[2].close*=1.03;view.render(fundingChanged,'1d',0,externalChanged);assert.equal(matrixCalls,matrixInitial);assert.ok(referenceCalls>referenceInitial);
+ const beforeCorrection=referenceCalls,corrected=structuredClone(fundingChanged);corrected.markets.A.close1d.rows[2].close*=1.02;view.render(corrected,'1d',0,externalChanged);assert.equal(matrixCalls,matrixInitial+1);assert.ok(referenceCalls>beforeCorrection);
+ for(const id of ['#funding-pairs','#same-funding-pairs','#inverse-funding-pairs'])node(id).collapsed=true;
+ summaryCalls=0;const beforeCoverage=[matrixCalls,referenceCalls];view.render(corrected,'1d',0,externalChanged);assert.equal(summaryCalls,0);assert.deepEqual([matrixCalls,referenceCalls],beforeCoverage);
+ view.renderCoverage(corrected,externalChanged);assert.ok(node('#matrix-coverage').innerHTML.includes('Updated public A'));assert.deepEqual([matrixCalls,referenceCalls],beforeCoverage);
+ document.hidden=true;view.render(history,'1d',0,external);assert.deepEqual([matrixCalls,referenceCalls],beforeCoverage);
+ console.log('JS: unified full Daily Hyperliquid matrix, aligned external confirmation without fallback, old-close corrections, funding-only cache reuse, collapsed-summary skipping and independent coverage rendering OK');
+}

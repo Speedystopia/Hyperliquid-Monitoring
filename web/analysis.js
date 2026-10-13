@@ -67,6 +67,63 @@
   const quote=quoteBook(context.books[market],notionalUsdc,side,context.now,context.maxAgeHours);if(!quote.available)return {...quote,market};
   const feeUsdc=quote.executionNotionalUsdc*feeBps/10000;return {...quote,market,feeBps,feeSource:fee.source,feeUsdc,costsUsdc:feeUsdc+quote.slippageUsdc};
  }
+ function applicableLeverage(metadata,marginUsdc,now=Date.now(),maxAgeHours=2){
+  const max=metadata?.maxLeverage,time=metadata?.maxLeverageTime;
+  if(!Number.isInteger(max)||max<1||max>10000||metadata.maxLeverageErrorCode||!Number.isFinite(time)||now-time>maxAgeHours*HOUR||time>now+5*60*1000||!Number.isFinite(marginUsdc)||marginUsdc<=0)return {available:false,reason:'MAX_LEVERAGE_UNAVAILABLE'};
+  let tiers=metadata.marginTiers;
+  if(metadata.marginTiersErrorCode)return {available:false,reason:'MARGIN_TIERS_UNAVAILABLE'};
+  if(Array.isArray(tiers)&&tiers.length){const tierTime=metadata.marginTiersTime??time;if(!Number.isFinite(tierTime)||now-tierTime>maxAgeHours*HOUR||tierTime>now+5*60*1000)return {available:false,reason:'MARGIN_TIERS_UNAVAILABLE'};}
+  if(!Array.isArray(tiers)||!tiers.length){const id=metadata.marginTableId??metadata.marginTable;if(Number.isInteger(id)&&id>=1&&id<50)tiers=[{lowerBound:0,maxLeverage:id}];else return {available:false,reason:'MARGIN_TIERS_UNAVAILABLE'};}
+  if(tiers.some(r=>!Number.isFinite(r.lowerBound)||!Number.isInteger(r.maxLeverage)))return {available:false,reason:'MARGIN_TIERS_UNAVAILABLE'};
+  tiers=tiers.map(r=>({lowerBound:r.lowerBound,maxLeverage:r.maxLeverage})).sort((a,b)=>a.lowerBound-b.lowerBound);
+  if(tiers[0].lowerBound!==0||tiers.some((r,i)=>r.lowerBound<0||r.maxLeverage<1||i&&(r.lowerBound===tiers[i-1].lowerBound||r.maxLeverage>tiers[i-1].maxLeverage)))return {available:false,reason:'MARGIN_TIERS_UNAVAILABLE'};
+  for(let leverage=max;leverage>=1;leverage--){const notionalUsdc=marginUsdc*leverage,tier=tiers.filter(r=>r.lowerBound<=notionalUsdc).at(-1);if(tier&&leverage<=tier.maxLeverage)return {available:true,leverage,publishedMaxLeverage:max,marginUsdc,notionalUsdc,tier,time,source:metadata.maxLeverageSource||'Hyperliquid metaAndAssetCtxs universe.maxLeverage'};}
+  return {available:false,reason:'MARGIN_TIERS_UNAVAILABLE'};
+ }
+ function fixedCapital(history,marketA,marketB,options){
+  const margin=options.fixedMarginUsdc??1000,now=options.executionNow??Date.now(),age=options.bookMaxAgeHours??defaults.bookMaxAgeHours,meta=history?.marketReferences?.markets;
+  const a=applicableLeverage(meta?.[marketA],margin,now,age),b=applicableLeverage(meta?.[marketB],margin,now,age);
+  return {available:a.available&&b.available,reason:!a.available?a.reason:!b.available?b.reason:null,legA:a,legB:b,marginPerLegUsdc:margin,totalMarginUsdc:2*margin,notionalA:a.notionalUsdc??null,notionalB:b.notionalUsdc??null};
+ }
+ function fundingSignal(rows,funding,at,notionalA,notionalB,initialSign=null){
+  const sample=rows.filter(r=>r.time<=at&&r.time>at-90*DAY),corr=correlation(sample),latest=funding.filter(r=>r.time<=at).at(-1);
+  if(sample.length<30||corr.percent===null||Math.abs(corr.percent)<=66||initialSign!==null&&Math.sign(corr.percent)!==initialSign)return {valid:false,reason:'STRATEGY_CORRELATION_INVALID',correlation:corr.percent,count:sample.length,latest};
+  if(!latest)return {valid:false,reason:'LATEST_FUNDING_UNAVAILABLE',correlation:corr.percent,count:sample.length,latest:null};
+  const rateA=latest.a/latest.hours,rateB=latest.b/latest.hours;let directionA,directionB;
+  if(corr.percent>0){directionA=rateA*notionalA-rateB*notionalB>=0?-1:1;directionB=-directionA;}else directionA=directionB=rateA*notionalA+rateB*notionalB>=0?-1:1;
+  const hourlyCashUsdc=-directionA*notionalA*rateA-directionB*notionalB*rateB;
+  return {valid:hourlyCashUsdc>0,reason:hourlyCashUsdc>0?null:'STRATEGY_CARRY_INVALID',directionA,directionB,correlation:corr.percent,count:sample.length,rateA,rateB,hourlyCashUsdc,latest};
+ }
+ function fixedStrategyBacktest(rows,funding,a,b,options,context,capital){
+  const o={...defaults,...options,costMode:'hyperliquid',feeMode:'taker'},flags=['CURRENT_EXECUTION_PROJECTION','FUNDING_PRICE_PROXY','CURRENT_LEVERAGE_PROJECTION'],assumptions={capitalBasis:'1000 USDC hypothetical margin per leg × currently applicable maximum integer leverage and margin tier. Equal margins can produce unequal notionals and directional exposure.',validation:'Initial directions and every funding decision use previously known payments and daily returns only. Daily checks close invalid strategies; funding reversals alone may reopen a profitable opposite direction. No calendar or covariance resizing.',costs:'Current account taker fees and current L2 depth projected onto historical hypothetical trades, without reconstructing historical fills.',risk:'Current maximum leverage/margin tiers are not historical parameters. Intraday maintenance margin and liquidations are not simulated; positive results do not establish liquidation safety.'};
+  const first=funding[0]?.start??Infinity,last=funding.at(-1)?.time??-Infinity,segment=longestSegment(rows.filter(r=>r.time-DAY>=first&&r.time<=last)),trainCount=Math.max(0,Math.min(180,Math.max(60,Math.floor(segment.length*.7)),segment.length-30));
+  const unavailable=reason=>({available:false,reason,trainingDays:trainCount,testDays:Math.max(0,segment.length-trainCount),timeline:[],flags:[...flags,reason],assumptions});
+  if(!capital.available)return unavailable(capital.reason);if(trainCount<60||segment.length-trainCount<30)return unavailable('INSUFFICIENT_OUT_OF_SAMPLE');
+  const start=segment[trainCount-1].time,end=segment.at(-1).time,trainingFund=fundingWindow(funding,segment[0].time-DAY,start),trainingIncomplete=trainingFund.hours*HOUR!==trainCount*DAY;
+  if(trainingIncomplete)flags.push('TRAINING_INCOMPLETE_FUNDING');
+  const initial=fundingSignal(segment,funding,start,capital.notionalA,capital.notionalB);if(!initial.valid)return unavailable(initial.reason);
+  const fills=[],events=[];let feeA=0,feeB=0,slipA=0,slipB=0,costs=0,pricePnl=0,fundingPnl=0,qA=0,qB=0,dirA=initial.directionA,dirB=initial.directionB,active=true,permanentlyClosed=false,missed=0,reversals=0,checks=0,peak=capital.totalMarginUsdc,maxDrawdown=0,marginExhausted=false,lastSignal=initial;
+  const charge=(market,amount,side,time,kind)=>{const quote=tradeCost(context,market,amount,side,o);if(!quote.available)return quote;fills.push({...quote,historicalTime:time,kind});costs+=quote.costsUsdc;if(market===context.marketA){feeA+=quote.feeUsdc;slipA+=quote.slippageUsdc;}else{feeB+=quote.feeUsdc;slipB+=quote.slippageUsdc;}return quote;};
+  const open=(time)=>{const ca=charge(context.marketA,capital.notionalA,dirA>0?'buy':'sell',time,'open'),cb=ca.available?charge(context.marketB,capital.notionalB,dirB>0?'buy':'sell',time,'open'):ca;if(!ca.available||!cb.available)return !ca.available?ca:cb;qA=dirA*capital.notionalA/a.byPrice.get(time);qB=dirB*capital.notionalB/b.byPrice.get(time);active=true;return {available:true};};
+  const close=(time)=>{const ca=charge(context.marketA,Math.abs(qA)*a.byPrice.get(time),dirA>0?'sell':'buy',time,'close'),cb=ca.available?charge(context.marketB,Math.abs(qB)*b.byPrice.get(time),dirB>0?'sell':'buy',time,'close'):ca;if(!ca.available||!cb.available)return !ca.available?ca:cb;qA=qB=0;active=false;return {available:true};};
+  const failed=quote=>({...unavailable(quote.reason),executionCosts:{...context,available:false,failedQuote:quote,fills}});
+  const opening=open(start);if(!opening.available)return failed(opening);
+  const timeline=[{time:start,grossPriceUsdc:0,fundingUsdc:0,costsUsdc:costs,netUsdc:-costs,equityUsdc:capital.totalMarginUsdc-costs}],byDay=new Map();for(const p of funding){const day=Math.ceil(p.time/DAY)*DAY;if(!byDay.has(day))byDay.set(day,[]);byDay.get(day).push(p);}
+  const test=segment.slice(trainCount);for(const row of test){const prior=row.time-DAY,pa=a.byPrice.get(prior),pb=b.byPrice.get(prior);
+   if(active){checks++;const effectiveA=Math.abs(qA)*pa,effectiveB=Math.abs(qB)*pb,signal=fundingSignal(segment,funding,prior,effectiveA,effectiveB,Math.sign(initial.correlation)),carry=signal.latest?-dirA*effectiveA*signal.latest.a/signal.latest.hours-dirB*effectiveB*signal.latest.b/signal.latest.hours:null;
+    const ratesChanged=signal.latest&&(signal.rateA!==lastSignal.rateA||signal.rateB!==lastSignal.rateB),reversal=signal.valid&&ratesChanged&&(signal.directionA!==dirA||signal.directionB!==dirB);
+    if(!signal.valid||!Number.isFinite(carry)||carry<=0||reversal){const closed=close(prior);if(!closed.available)return failed(closed);const reason=!signal.valid?signal.reason:reversal?'FUNDING_DIRECTION_REVERSAL':'STRATEGY_CARRY_INVALID';events.push({time:prior,reason,action:reversal?'reverse':'close',fundingTime:signal.latest?.time??null,correlation:signal.correlation});
+     if(reversal){dirA=signal.directionA;dirB=signal.directionB;const reopened=open(prior);if(!reopened.available)return failed(reopened);reversals++;}else{permanentlyClosed=true;flags.push('STRATEGY_CLOSED');}
+    }lastSignal=signal;
+   }
+   if(active){pricePnl+=qA*(a.byPrice.get(row.time)-pa)+qB*(b.byPrice.get(row.time)-pb);const payments=(byDay.get(row.time)||[]).filter(p=>p.start>=prior);if(payments.reduce((n,p)=>n+p.hours,0)!==24)missed++;for(const p of payments)fundingPnl-=qA*pa*p.a+qB*pb*p.b;}
+   if(row===test.at(-1)&&active){const closed=close(row.time);if(!closed.available)return failed(closed);}
+   const net=pricePnl+fundingPnl-costs,equity=capital.totalMarginUsdc+net;peak=Math.max(peak,equity);maxDrawdown=Math.max(maxDrawdown,(peak-equity)/peak*100);if(equity<=0)marginExhausted=true;
+   timeline.push({time:row.time,grossPriceUsdc:pricePnl,fundingUsdc:fundingPnl,costsUsdc:costs,netUsdc:net,equityUsdc:equity,active});
+  }
+  if(missed)flags.push('BACKTEST_INCOMPLETE_FUNDING');if(marginExhausted)flags.push('SIMULATED_MARGIN_EXHAUSTED');if(capital.notionalA!==capital.notionalB)flags.push('UNEQUAL_LEVERAGED_NOTIONALS');
+  const net=pricePnl+fundingPnl-costs;return {available:true,eligible:false,cashflowComplete:!missed,trainingFundingComplete:!trainingIncomplete,completeness:missed||trainingIncomplete?'partial':'projection',trainingDays:trainCount,testDays:test.length,start,end,model:initial,directionA:initial.directionA>0?'long':'short',directionB:initial.directionB>0?'long':'short',totalNotionalUsdc:capital.notionalA+capital.notionalB,totalMarginUsdc:capital.totalMarginUsdc,capital,grossPriceUsdc:pricePnl,fundingUsdc:fundingPnl,fundingKnownUsdc:fundingPnl,costsUsdc:costs,feeUsdc:feeA+feeB,slippageUsdc:slipA+slipB,feeUsdcA:feeA,feeUsdcB:feeB,slippageUsdcA:slipA,slippageUsdcB:slipB,netUsdc:net,netPct:net/capital.totalMarginUsdc*100,maxDrawdownPct:maxDrawdown,returnAnnualizedPct:null,fundingIncompleteDays:missed,fundingCompleteDays:test.length-missed,rebalanceCount:reversals,rebalanceChecks:checks,rebalanceEvents:events,permanentlyClosed,marginExhausted,executionCosts:{...context,available:true,fills,projection:true},timeline,flags:[...new Set(flags)],assumptions};
+ }
  function backtest(rows,funding,a,b,options={},context){
   const o={...defaults,...options};for(const key of Object.keys(defaults))if(typeof defaults[key]==='number'&&(!Number.isFinite(o[key])||o[key]<0))o[key]=defaults[key];o.anchorNotionalUsdc=Math.max(1,o.anchorNotionalUsdc);o.minTrainingDays=Math.max(30,Math.floor(o.minTrainingDays));o.minTestDays=Math.max(30,Math.floor(o.minTestDays));o.rebalanceDays=Math.max(1,Math.floor(o.rebalanceDays));o.hedgeLookbackDays=Math.max(30,Math.floor(o.hedgeLookbackDays));o.rebalanceMinObservations=Math.max(30,Math.floor(o.rebalanceMinObservations));
   if(!['legacy','hyperliquid'].includes(o.costMode))o.costMode='hyperliquid';if(!['taker','maker'].includes(o.feeMode))o.feeMode='taker';if(!['adaptive','calendar','none'].includes(o.rebalanceMode))o.rebalanceMode='adaptive';
@@ -142,17 +199,23 @@
   if(funds.d30.estimatedNetOnLegAPct!==null&&funds.d30.estimatedNetOnLegAPct<0)flags.push('NEGATIVE_RECENT_CARRY');
   if(funding.length&&(fundingStart!==start||fundingEnd!==end))flags.push('FUNDING_PRICE_PERIODS_DIFFER');
   if(coverage===null||coverage<99)flags.push('INCOMPLETE_MATCHED_FUNDING');if(funds.d30.hours<720||!funds.d30.eligible)flags.push('SHORT_RECENT_FUNDING_SAMPLE');if(model.rawRatio!==null&&model.rawRatio!==model.ratio)flags.push('HEDGE_RATIO_CAPPED');
-  const executionCosts=executionContext(history,marketA,marketB,options),simulation=backtest(rows,funding,a,b,options,executionCosts);flags.push(...simulation.flags);
-  return {marketA,marketB,available:rows.length>0,correlation:correlations,hedge,funding:funds,executionCosts:simulation.executionCosts||executionCosts,quality:{matchedDays:rows.length,expectedDays,missingDays,start,end,fundingStart:funding.length?fundingStart:null,fundingEnd:funding.length?fundingEnd:null,fundingDays:funding.length?(fundingEnd-fundingStart)/DAY:0,fundingCoveragePct:coverage,matchedFundingPayments:funding.length,unmatchedFundingA:a.funding.length-funding.length,unmatchedFundingB:b.funding.length-funding.length,flags:[...new Set(flags)]},backtest:simulation,flags:[...new Set(flags)],method:'Adjacent daily percentage returns on common timestamps; no interpolation. Metrics are separate, without an aggregate reliability score.'};
+  const executionCosts=executionContext(history,marketA,marketB,options),capital=options.strategyMode==='funding-only'?fixedCapital(history,marketA,marketB,options):null;
+  let strategy=null;if(capital){const signal=capital.available?fundingSignal(rows,funding,Math.max(end,fundingEnd),capital.notionalA,capital.notionalB):null,da=signal?.directionA,db=signal?.directionB,f30=funds.d30;
+   const annualCash=da&&Number.isFinite(f30.annualizedA)&&Number.isFinite(f30.annualizedB)?-da*capital.notionalA*f30.annualizedA/100-db*capital.notionalB*f30.annualizedB/100:null;
+   strategy={available:capital.available,valid:capital.available&&!!signal?.valid,reason:capital.reason||signal?.reason||null,capital,directionA:da?da>0?'long':'short':null,directionB:db?db>0?'long':'short':null,correlation:signal?.correlation??null,observations:signal?.count??0,fundingTime:signal?.latest?.time??null,hourlyFundingUsdc:signal?.hourlyCashUsdc??null,annualFundingCashUsdc:annualCash,annualFundingMarginPct:annualCash===null?null:annualCash/capital.totalMarginUsdc*100,notionalImbalancePct:capital.available?Math.abs(capital.notionalA-capital.notionalB)/(capital.notionalA+capital.notionalB)*100:null};
+   if(capital.available&&capital.notionalA!==capital.notionalB)flags.push('UNEQUAL_LEVERAGED_NOTIONALS');if(!strategy.valid)flags.push(strategy.reason||'STRATEGY_CARRY_INVALID');
+  }
+  const simulation=capital?fixedStrategyBacktest(rows,funding,a,b,options,executionCosts,capital):backtest(rows,funding,a,b,options,executionCosts);flags.push(...simulation.flags);
+  return {marketA,marketB,available:rows.length>0,correlation:correlations,hedge,funding:funds,strategy,executionCosts:simulation.executionCosts||executionCosts,quality:{matchedDays:rows.length,expectedDays,missingDays,start,end,fundingStart:funding.length?fundingStart:null,fundingEnd:funding.length?fundingEnd:null,fundingDays:funding.length?(fundingEnd-fundingStart)/DAY:0,fundingCoveragePct:coverage,matchedFundingPayments:funding.length,unmatchedFundingA:a.funding.length-funding.length,unmatchedFundingB:b.funding.length-funding.length,flags:[...new Set(flags)]},backtest:simulation,flags:[...new Set(flags)],method:'Adjacent daily percentage returns on common timestamps; no interpolation. Metrics are separate, without an aggregate reliability score.'};
  }
  function analyzePair(history,marketA,marketB,options={}){
   if(!history||typeof history!=='object')return {marketA,marketB,available:false,flags:['INVALID_PAIR']};
   // Time crosses only bounded validity states. Unchanged polls reuse the result,
   // but a cached success expires even if an unreachable source leaves JSON unchanged.
   const now=options.executionNow??Date.now(),maxAge=options.bookMaxAgeHours??defaults.bookMaxAgeHours;
-  const bookValidity=[marketA,marketB].map(m=>{const book=history.marketReferences?.depthBooks?.[m],time=book?.collectedAt||book?.time;return Number.isFinite(time)?[now-time>maxAge*HOUR,time>now+5*60*1000]:null;});
-  let pairs=pairCache.get(history);if(!pairs){pairs=new Map();pairCache.set(history,pairs);}const key=JSON.stringify([marketA,marketB,Object.keys(defaults).map(k=>options[k]??defaults[k]),options.accountFees??options.executionOverrides??null,bookValidity]);
+  const bookValidity=[marketA,marketB].map(m=>{const book=history.marketReferences?.depthBooks?.[m],meta=history.marketReferences?.markets?.[m],times=[book?.collectedAt||book?.time,meta?.maxLeverageTime,meta?.marginTiersTime];return times.map(time=>Number.isFinite(time)?[now-time>maxAge*HOUR,time>now+5*60*1000]:null);});
+  let pairs=pairCache.get(history);if(!pairs){pairs=new Map();pairCache.set(history,pairs);}const key=JSON.stringify([marketA,marketB,Object.keys(defaults).map(k=>options[k]??defaults[k]),options.accountFees??options.executionOverrides??null,bookValidity,options.strategyMode??null,options.fixedMarginUsdc??null]);
   if(pairs.has(key))return pairs.get(key);const result=calculatePair(history,marketA,marketB,options);if(pairs.size>=24)pairs.delete(pairs.keys().next().value);pairs.set(key,result);return result;
  }
- const api={prepare,analyzePair,correlation,matchFunding,fundingWindow,backtest,executionContext,quoteBook,defaults,HOUR,DAY};if(typeof module!=='undefined')module.exports=api;else root.OilAnalysis=api;
+ const api={prepare,analyzePair,correlation,matchFunding,fundingWindow,backtest,executionContext,quoteBook,applicableLeverage,fixedCapital,fundingSignal,defaults,HOUR,DAY};if(typeof module!=='undefined')module.exports=api;else root.OilAnalysis=api;
 })(globalThis);

@@ -82,11 +82,21 @@
   }
   return pairs.sort((a,b)=>a.percent-b.percent);
  }
- function selectCorrelationPairs(list){
-  const sorted=list.filter(c=>Number.isFinite(c.percent)&&c.percent!==0&&c.count>=3).slice().sort((a,b)=>Math.abs(b.percent)-Math.abs(a.percent));
-  const strong=sorted.filter(c=>Math.abs(c.percent)>66);
-  return {pairs:(strong.length?strong:sorted).slice(0,strong.length?6:1),fallback:!strong.length&&sorted.length>0};
+ function sameFundingPairs(cells,stats){
+  const pairs=[];
+  for(let i=0;i<stats.length;i++)for(let j=i+1;j<stats.length;j++){
+   const a=stats[i].annualized,b=stats[j].annualized,c=cells[i]?.[j];
+   if(Number.isFinite(a)&&Number.isFinite(b)&&c&&Number.isFinite(c.percent)&&c.percent>0&&c.count>=3&&((a>0&&b>0)||(a<0&&b<0)))pairs.push({i,j,...c,...fundingCarry(a,b)});
+  }
+  return pairs.sort((a,b)=>b.percent-a.percent);
  }
- const api={HOUR,SCALE,decimal,fixed,weighted,received,aggregateFunding,positionSummary,fundingStats,correlation,selectWindow,priceStats,indexAfter,priceReturns,correlationMatrix,fundingCarry,oppositeFundingPairs,inverseFundingPairs,selectCorrelationPairs,fundingNetBand};
+ function selectCorrelationPairs(list){
+  const sorted=list.filter(c=>Number.isFinite(c.percent)&&Math.abs(c.percent)>66&&c.count>=3).slice().sort((a,b)=>Math.abs(b.percent)-Math.abs(a.percent));
+  return {pairs:sorted.slice(0,6),fallback:false};
+ }
+ function selectStrengthPairs(list,strong){
+  return list.filter(c=>Number.isFinite(c.percent)&&c.count>=3&&(strong?Math.abs(c.percent)>=75:Math.abs(c.percent)<=25)).slice().sort((a,b)=>strong?Math.abs(b.percent)-Math.abs(a.percent):Math.abs(a.percent)-Math.abs(b.percent)).slice(0,6);
+ }
+ const api={HOUR,SCALE,decimal,fixed,weighted,received,aggregateFunding,positionSummary,fundingStats,correlation,selectWindow,priceStats,indexAfter,priceReturns,correlationMatrix,fundingCarry,oppositeFundingPairs,sameFundingPairs,inverseFundingPairs,selectCorrelationPairs,selectStrengthPairs,fundingNetBand};
  if(typeof module!=='undefined')module.exports=api;else root.OilMath=api;
 })(globalThis);

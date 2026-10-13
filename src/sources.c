@@ -70,11 +70,37 @@ cJSON *sources_fees_parse(const cJSON *response,int64_t time,int account){
     }else{put(fees,"baseTakerRate",cJSON_CreateNull());put(fees,"baseMakerRate",cJSON_CreateNull());put(fees,"activeReferralDiscount",cJSON_CreateNull());text(fees,"errorCode","HL_USER_FEES_INVALID_RESPONSE");}
     return fees;
 }
+static void leverage_fields(cJSON *destination,const cJSON *metadata,double time){double leverage=value(metadata,"maxLeverage");
+    text(destination,"maxLeverageSource","Hyperliquid metaAndAssetCtxs universe.maxLeverage");
+    text(destination,"maxLeverageDocumentation","https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/perpetuals");
+    if(isfinite(leverage)&&leverage>=1&&leverage<=SOURCES_LEVERAGE_PARSE_LIMIT&&floor(leverage)==leverage&&isfinite(time)&&time>0&&time<=9007199254740991.0&&floor(time)==time){
+        num(destination,"maxLeverage",leverage);num(destination,"maxLeverageTime",time);text(destination,"maxLeverageErrorCode","");
+    }else{put(destination,"maxLeverage",cJSON_CreateNull());put(destination,"maxLeverageTime",cJSON_CreateNull());text(destination,"maxLeverageErrorCode","HL_MAX_LEVERAGE_UNAVAILABLE");}
+}
+static void margin_fields(cJSON *destination,const cJSON *asset,const cJSON *meta,const cJSON *normalized,double time){
+    double id=value(asset,"marginTableId"),previous_bound=-1,previous_leverage=SOURCES_LEVERAGE_PARSE_LIMIT;const cJSON *tiers=normalized,*row,*table,*tables=cJSON_GetObjectItemCaseSensitive(meta,"marginTables");cJSON *parsed=cJSON_CreateArray();int matched=0,valid=isfinite(id)&&id>=1&&id<=2147483647&&floor(id)==id&&isfinite(time)&&time>0&&time<=9007199254740991.0&&floor(time)==time;const char *source="Hyperliquid metaAndAssetCtxs meta.marginTables";
+    if(valid&&!normalized&&cJSON_IsArray(tables))cJSON_ArrayForEach(table,tables){const cJSON *table_id=cJSON_GetArrayItem(table,0);if(cJSON_IsNumber(table_id)&&table_id->valuedouble==id){matched++;tiers=cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(table,1),"marginTiers");}}
+    if(matched>1)valid=0;
+    if(valid&&!tiers&&!matched&&id<50){cJSON *tier=cJSON_CreateObject();num(tier,"lowerBound",0);num(tier,"maxLeverage",id);cJSON_AddItemToArray(parsed,tier);source="Hyperliquid documented single margin tier for marginTableId < 50";}
+    else if(valid&&cJSON_IsArray(tiers)&&cJSON_GetArraySize(tiers)>0&&cJSON_GetArraySize(tiers)<=1000){int count=0;
+        cJSON_ArrayForEach(row,tiers){double bound=value(row,"lowerBound"),cap=value(row,"maxLeverage");cJSON *tier;
+            if(!isfinite(bound)||bound<0||bound>9007199254740991.0||bound<=previous_bound||(!count&&bound!=0)||!isfinite(cap)||cap<1||cap>SOURCES_LEVERAGE_PARSE_LIMIT||floor(cap)!=cap||cap>previous_leverage){valid=0;break;}
+            tier=cJSON_CreateObject();num(tier,"lowerBound",bound);num(tier,"maxLeverage",cap);cJSON_AddItemToArray(parsed,tier);previous_bound=bound;previous_leverage=cap;count++;
+        }
+    }else valid=0;
+    if(isfinite(id)&&id>=1&&id<=2147483647&&floor(id)==id)num(destination,"marginTableId",id);else put(destination,"marginTableId",cJSON_CreateNull());
+    text(destination,"marginTiersSource",source);text(destination,"marginTiersDocumentation","https://hyperliquid.gitbook.io/hyperliquid-docs/trading/margin-tiers");
+    if(valid&&cJSON_GetArraySize(parsed)>0){put(destination,"marginTiers",parsed);num(destination,"marginTiersTime",time);text(destination,"marginTiersErrorCode","");}
+    else{cJSON_Delete(parsed);put(destination,"marginTiers",cJSON_CreateArray());put(destination,"marginTiersTime",cJSON_CreateNull());text(destination,"marginTiersErrorCode","HL_MARGIN_TIERS_UNAVAILABLE");}
+}
 cJSON *sources_market_fees(const cJSON *quote,const cJSON *base_fees){
     cJSON *out=cJSON_CreateObject();double taker=value(base_fees,"baseTakerRate"),maker=value(base_fees,"baseMakerRate"),referral=value(base_fees,"activeReferralDiscount"),scale=value(quote,"deployerFeeScale"),share,hip,growth;
     const cJSON *mode=cJSON_GetObjectItemCaseSensitive(quote,"growthMode"),*aligned=cJSON_GetObjectItemCaseSensitive(quote,"alignedFeeDiscount");
     static const char *keys[]={"deployerFeeScale","growthMode","collateralToken","alignedFeeDiscount","isHip3"};int i;
     num(out,"time",value(base_fees,"time"));num(out,"metadataTime",value(quote,"time"));text(out,"source","Hyperliquid userFees + metaAndAssetCtxs; official perp fee formula");text(out,"formulaSource","https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees");
+    leverage_fields(out,quote,value(quote,"time"));
+    {const cJSON *tiers=cJSON_GetObjectItemCaseSensitive(quote,"marginTiers"),*stamp=cJSON_GetObjectItemCaseSensitive(quote,"marginTiersTime"),*source=cJSON_GetObjectItemCaseSensitive(quote,"marginTiersSource");
+    margin_fields(out,quote,NULL,tiers,stamp?value(quote,"marginTiersTime"):value(quote,"time"));if(cJSON_IsString(source))text(out,"marginTiersSource",source->valuestring);}
     for(i=0;i<(int)(sizeof(keys)/sizeof(keys[0]));i++){const cJSON *field=cJSON_GetObjectItemCaseSensitive(quote,keys[i]);put(out,keys[i],field?cJSON_Duplicate(field,1):cJSON_CreateNull());}
     num(out,"baseTakerRate",taker);num(out,"baseMakerRate",maker);num(out,"activeReferralDiscount",referral);
     if(!isfinite(taker)||taker<0||taker>0.01||!isfinite(maker)||maker<-.01||maker>.01||!isfinite(referral)||referral<0||referral>1||!isfinite(scale)||scale<0||scale>10||!cJSON_IsBool(mode)||!cJSON_IsBool(aligned)){
@@ -127,8 +153,8 @@ int sources_context_apply(cJSON *markets,const cJSON *response,int64_t time,int 
             if(!cJSON_IsString(name)||strcmp(name->valuestring,OIL_COINS[i]))continue;
             context=cJSON_GetArrayItem(contexts,n);if(!cJSON_IsObject(context))return 0;
             quote=cJSON_CreateObject();missing=cJSON_CreateArray();num(quote,"time",(double)time);text(quote,"apiCoin",OIL_COINS[i]);text(quote,"source","Hyperliquid metaAndAssetCtxs");
-            {const cJSON *asset=cJSON_GetArrayItem(universe,n),*growth=cJSON_GetObjectItemCaseSensitive(asset,"growthMode");double scale=xyz?value(asset,"deployerFeeScale"):0,collateral=value(meta,"collateralToken"),size_decimals=value(asset,"szDecimals"),leverage=value(asset,"maxLeverage");
-            put(quote,"isHip3",cJSON_CreateBool(xyz));num(quote,"szDecimals",size_decimals);num(quote,"maxLeverage",leverage);num(quote,"collateralToken",collateral);
+            {const cJSON *asset=cJSON_GetArrayItem(universe,n),*growth=cJSON_GetObjectItemCaseSensitive(asset,"growthMode");double scale=xyz?value(asset,"deployerFeeScale"):0,collateral=value(meta,"collateralToken"),size_decimals=value(asset,"szDecimals");
+            put(quote,"isHip3",cJSON_CreateBool(xyz));num(quote,"szDecimals",size_decimals);leverage_fields(quote,asset,(double)time);margin_fields(quote,asset,meta,NULL,(double)time);num(quote,"collateralToken",collateral);
             if(isfinite(scale)&&scale>=0&&scale<=10)num(quote,"deployerFeeScale",scale);else put(quote,"deployerFeeScale",cJSON_CreateNull());
             if(!xyz)put(quote,"growthMode",cJSON_CreateBool(0));
             else if(cJSON_IsString(growth)&&(!strcmp(growth->valuestring,"enabled")||!strcmp(growth->valuestring,"disabled")))put(quote,"growthMode",cJSON_CreateBool(!strcmp(growth->valuestring,"enabled")));

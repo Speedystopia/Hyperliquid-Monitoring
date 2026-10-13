@@ -1,6 +1,9 @@
 #ifndef OIL_SOURCES_H
 #define OIL_SOURCES_H
 #include "core.h"
+/* Parsing guard only, not an exchange leverage limit. Actual permitted
+   leverage always comes from the market's current universe.maxLeverage. */
+#define SOURCES_LEVERAGE_PARSE_LIMIT 10000
 /* Optional, public reference data. Failures never discard historical prices. */
 void sources_sync(Database *db,int force);
 int sources_context_apply(cJSON *markets,const cJSON *response,int64_t time,int xyz);

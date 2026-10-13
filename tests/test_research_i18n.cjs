@@ -15,7 +15,7 @@ for(const call of research.matchAll(/\bL\(/g)){
 for(const call of research.matchAll(/\bmetric\('([^']+)'/g))phrases.add(call[1]);
 for(const section of [html.slice(html.indexOf('<h3>Prix Hyperliquid et sens du funding'),html.indexOf('<div id="pair-view">')),html.slice(html.indexOf('id="research-panel"'),html.indexOf('<footer>'))])for(const text of section.matchAll(/>([^<>]+)</g)){const phrase=text[1].trim();if(phrase&&!/^\d+$/.test(phrase))phrases.add(phrase);}
 phrases.delete('an'); // The existing complete unit "% / an" is used by the root UI.
-for(const key of ['adaptive','calendar'])phrases.delete(key); // Internal mode keys, not translated UI labels.
+for(const key of ['adaptive','calendar','reverse'])phrases.delete(key); // Internal mode keys, not translated UI labels.
 const source=fs.readFileSync(path.join(web,'i18n.js'),'utf8').replace('return {translate,tree,setup,set,','globalThis.translationRows=rows;return {translate,tree,setup,set,').replace('OilI18n.setup();','globalThis.i18n=OilI18n;');
 const context={document:{documentElement:{}},localStorage:{getItem:()=>null,setItem(){}}};vm.createContext(context);vm.runInContext(source,context);
 const rows=new Map(context.translationRows.map(r=>[r[0],r]));

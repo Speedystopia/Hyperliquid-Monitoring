@@ -101,3 +101,25 @@ function withExecution(history){
  const unsafe=analysis.analyzePair(reversed,'A','B',o);assert.ok(unsafe.backtest.blockedRebalances>0);assert.ok(unsafe.backtest.flags.includes('REBALANCE_SIGNAL_UNCERTAIN'));assert.equal(unsafe.backtest.directionA,'short');assert.equal(unsafe.backtest.directionB,'long');
  console.log('Analysis: adaptive effective-ratio trigger, calm no-trade behavior, only prior observations and uncertain/reversed-sign blocking OK');
 }
+function withMargin(history,maxA=20,maxB=30){
+ const data=withExecution(history),time=Date.now();data.marketReferences.markets={};
+ for(const [key,max] of [['A',maxA],['B',maxB]])data.marketReferences.markets[key]={maxLeverage:max,maxLeverageTime:time,maxLeverageSource:'Hyperliquid maxLeverage fixture',marginTableId:max,marginTiers:[{lowerBound:0,maxLeverage:max}],marginTiersTime:time,marginTiersErrorCode:''};
+ return data;
+}
+{
+ const time=Date.now(),meta={maxLeverage:50,maxLeverageTime:time,marginTableId:50,marginTiersTime:time,marginTiers:[{lowerBound:0,maxLeverage:50},{lowerBound:20000,maxLeverage:20}]};
+ assert.equal(analysis.applicableLeverage(meta,1000,time).leverage,20);assert.equal(analysis.applicableLeverage({...meta,marginTiers:[{lowerBound:0,maxLeverage:50},{lowerBound:20000,maxLeverage:10}]},1000,time).leverage,19);
+ assert.equal(analysis.applicableLeverage({...meta,marginTiers:[]},1000,time).reason,'MARGIN_TIERS_UNAVAILABLE');assert.equal(analysis.applicableLeverage({...meta,maxLeverageTime:time-3*HOUR},1000,time).reason,'MAX_LEVERAGE_UNAVAILABLE');assert.equal(analysis.applicableLeverage({...meta,marginTiers:[{lowerBound:null,maxLeverage:50}]},1000,time).reason,'MARGIN_TIERS_UNAVAILABLE');
+ const history=withMargin(fixture()),o={strategyMode:'funding-only',costMode:'hyperliquid',feeMode:'taker',fixedMarginUsdc:1000},result=analysis.analyzePair(history,'A','B',o),sim=result.backtest;
+ assert.equal(result.strategy.capital.notionalA,20000);assert.equal(result.strategy.capital.notionalB,30000);assert.equal(result.strategy.notionalImbalancePct,20);assert.ok(result.flags.includes('UNEQUAL_LEVERAGED_NOTIONALS'));assert.equal(sim.available,true);assert.equal(sim.totalMarginUsdc,2000);assert.equal(sim.totalNotionalUsdc,50000);assert.equal(sim.rebalanceCount,0);assert.equal(sim.returnAnnualizedPct,null);assert.equal(sim.eligible,false);assert.ok(sim.flags.includes('CURRENT_LEVERAGE_PROJECTION'));
+ const reversed=structuredClone(history);for(const key of ['A','B'])for(const row of reversed.markets[key].fundingHourly.rows)if(row.time>200*DAY)row.fundingRate*=-1;
+ const reversal=analysis.analyzePair(reversed,'A','B',o);assert.equal(reversal.backtest.rebalanceCount,1);assert.equal(reversal.backtest.rebalanceEvents[0].time,201*DAY);assert.equal(reversal.backtest.rebalanceEvents[0].action,'reverse');assert.equal(reversal.backtest.permanentlyClosed,false);assert.ok(reversal.backtest.rebalanceEvents[0].fundingTime<=reversal.backtest.rebalanceEvents[0].time);
+ const later=structuredClone(reversed);for(const key of ['A','B'])for(const row of later.markets[key].fundingHourly.rows)if(row.time>220*DAY)row.fundingRate*=2;
+ const future=analysis.analyzePair(later,'A','B',o);assert.deepEqual(future.backtest.model,reversal.backtest.model);assert.deepEqual(future.backtest.rebalanceEvents.filter(e=>e.time<=210*DAY),reversal.backtest.rebalanceEvents.filter(e=>e.time<=210*DAY));
+ const neutral=structuredClone(history);for(const row of neutral.markets.A.fundingHourly.rows)if(row.time>200*DAY)row.fundingRate=0;for(const row of neutral.markets.B.fundingHourly.rows)if(row.time>200*DAY)row.fundingRate=0;
+ const closed=analysis.analyzePair(neutral,'A','B',o);assert.equal(closed.backtest.permanentlyClosed,true);assert.equal(closed.backtest.rebalanceCount,0);assert.equal(closed.backtest.rebalanceEvents[0].action,'close');assert.equal(closed.backtest.rebalanceEvents[0].reason,'STRATEGY_CARRY_INVALID');
+ const broken=structuredClone(history),split=sim.start;let previous=broken.markets.B.close1d.rows.find(r=>r.time===split).close;for(const row of broken.markets.B.close1d.rows)if(row.time>split){const index=row.time/DAY;previous*=1-(.01*Math.sin(index*.71)+.005*Math.cos(index*.31));row.close=previous;}
+ const invalid=analysis.analyzePair(broken,'A','B',o);assert.equal(invalid.backtest.permanentlyClosed,true);assert.equal(invalid.backtest.rebalanceEvents[0].reason,'STRATEGY_CORRELATION_INVALID');assert.equal(invalid.backtest.rebalanceCount,0);
+ const absent=withMargin(fixture());delete absent.marketReferences.markets.B.marginTiers;absent.marketReferences.markets.B.marginTableId=51;assert.equal(analysis.analyzePair(absent,'A','B',o).backtest.reason,'MARGIN_TIERS_UNAVAILABLE');
+ console.log('Analysis: fixed 1000 USDC margin per leg, applicable leverage tiers, unequal notionals, prior-funding reversal only, invalidation closes without reopening and no liquidation certification OK');
+}

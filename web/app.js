@@ -29,7 +29,7 @@ function selectedWindow(){
 function selectedAnalysis(){
  const days=$('#range').value;if(analysisCache?.source===history&&analysisCache.frame===frame&&analysisCache.days===days)return analysisCache;
  const window=selectedWindow(),data=series.map(s=>{const rows=M.selectWindow(history.markets[s.market].fundingHourly.rows,window.start,window.end);return {funding:M.fundingStats(rows),first:rows[0]?.time,last:rows.at(-1)?.time,price:M.priceStats(s.price,window.start,window.end)};});
- const correlation=M.correlation(M.selectWindow(series[0].price,window.start,window.end),M.selectWindow(series[1].price,window.start,window.end));
+ const correlation=M.correlation(...series.map(s=>M.selectWindow(M.priceReturns(s.price,step()),window.start,window.end)));
  analysisCache={source:history,frame,days,window,data,correlation};return analysisCache;
 }
 function renderMetrics(){
@@ -43,7 +43,7 @@ function renderMetrics(){
 function renderInsights(){
  if(!history||!series.length)return;const analysis=selectedAnalysis(),window=analysis.window;
  const cards=markets.map((m,i)=>{const f=analysis.data[i].funding;return `<div class="metric"><label>${names[m]} · funding annualisé réalisé</label><strong class="${i?'wti-text':'brent-text'}">${fmt(f.annualized,3)} <small>% / an</small></strong><p class="hint">Période sélectionnée : ${window.label}<br>Somme des paiements / ${f.hours.toLocaleString(OilI18n.locale)} heures couvertes × 8 760<br>Funding cumulé sur la période : <b>${fmt(f.total,3)} %</b><br>${fmt(f.days,1)} jours observés</p></div>`;});
- const corr=analysis.correlation;cards.push(`<div class="metric correlation"><label>Corrélation des prix ${names[markets[0]]} / ${names[markets[1]]} · ${frame==='4h'?'4H':'Daily'}</label><strong>${fmt(corr.percent,2)} <small>%</small></strong><p class="hint">Période sélectionnée : ${window.label}<br>Pearson sur les clôtures communes de la période<br>${corr.count.toLocaleString(OilI18n.locale)} clôtures appariées${corr.first?'<br>'+date(corr.first)+' → '+date(corr.last):''}<br>−100 % : inverse · 0 % : linéaire nulle · +100 % : même sens</p></div>`);
+ const corr=analysis.correlation;cards.push(`<div class="metric correlation"><label>Corrélation des prix ${names[markets[0]]} / ${names[markets[1]]} · ${frame==='4h'?'4H':'Daily'}</label><strong>${fmt(corr.percent,2)} <small>%</small></strong><p class="hint">Période sélectionnée : ${window.label}<br>Pearson sur les variations entre clôtures consécutives.<br>${corr.count.toLocaleString(OilI18n.locale)} observations appariées${corr.first?'<br>'+date(corr.first)+' → '+date(corr.last):''}<br>−100 % : inverse · 0 % : linéaire nulle · +100 % : même sens</p></div>`);
  $('#insights').innerHTML=cards.join('');
  OilI18n.tree($('#insights'));
 }
@@ -123,10 +123,24 @@ class Chart{
 const charts=[new Chart('funding','funding'),new Chart('price','price'),new Chart('combined','combined')];function drawAll(){if(route!=='home'&&route!=='global')charts.forEach(c=>c.requestDraw());}
 const researchView=createResearchView({analysis:OilAnalysis,catalog:C,translate:L,format:fmt,date,escape:esc});
 const globalView=createGlobalView({math:M,catalog:C,research:researchView,translate:L,format:fmt,date,escape:esc});
-globalView.setChange(()=>{renderGlobal();if(globalView.source==='public')poller.request();});
+globalView.setChange(()=>renderGlobal());
 researchView.setChange(()=>{if(route==='global')renderGlobal();});
 function renderGlobal(){globalView.render(history,'1d',0,publicPrices,publicError);researchView.render(history,markets);}
-function updateResearchAccount(value){if(researchView.setAccount(value)&&route!=='home'){if(route==='global')renderGlobal();else researchView.render(history,markets);}}
+function updateResearchAccount(value){if(researchView.setAccount(value,$('#address').value.trim())&&route!=='home'){if(route==='global')renderGlobal();else researchView.render(history,markets);}}
+const blockControls=[];
+function updateBlockLabels(){for(const {body,button} of blockControls){const label=L(body.hidden?'Développer le bloc':'Réduire le bloc');button.textContent=body.hidden?'+':'−';button.setAttribute('aria-label',label);button.title=label;button.setAttribute('aria-expanded',String(!body.hidden));}}
+function installBlocks(){
+ for(const [index,panel] of [...document.querySelectorAll('section.panel')].entries()){
+  if(panel.dataset.collapseReady)continue;panel.dataset.collapseReady='1';
+  let heading=[...panel.children].find(el=>el.classList.contains('section-title'));
+  if(!heading){heading=document.createElement('div');heading.className='section-title block-heading';const title=[...panel.children].find(el=>/^H[34]$/.test(el.tagName));if(title)heading.append(title);panel.prepend(heading);}
+  const body=document.createElement('div');body.className='block-body';body.id='collapsible-content-'+index;
+  for(const child of [...panel.children])if(child!==heading)body.append(child);panel.append(body);
+  const button=document.createElement('button');button.type='button';button.className='quiet block-toggle';button.setAttribute('aria-controls',body.id);heading.append(button);blockControls.push({body,button});
+  button.onclick=()=>{body.hidden=!body.hidden;panel.classList.toggle('block-collapsed',body.hidden);updateBlockLabels();if(body.hidden){for(const chart of charts)if(body.contains(chart.canvas))chart.suspend();}else{if(panel.id==='research-panel')researchView.render(history,markets);if(route==='global')renderGlobal();drawAll();}};
+ }
+ updateBlockLabels();
+}
 function renderNavigation(){
  for(const [i,id] of ['asset-a','asset-b'].entries()){
   $('#'+id).innerHTML=C.keys.map(m=>'<option value="'+m+'"'+(m===markets[1-i]?' disabled':'')+'>'+esc(names[m])+'</option>').join('');$('#'+id).value=markets[i];
@@ -157,11 +171,11 @@ function switchPage(){
  if(next!==route||chosen.join('|')!==markets.join('|')){charts.forEach(c=>c.suspend());route=next;markets=chosen;analysisCache=null;annualStats=[];clearAccountCaches();view=null;series=[];}
  $('#home-view').hidden=route!=='home';$('#monitor-content').hidden=route==='home';$('#page-intro').hidden=route==='home';$('#pair-view').hidden=route==='global';$('#global-view').hidden=route!=='global';$('#reset').hidden=route==='global';$('#monitor-toolbar').hidden=route==='global';
  renderNavigation();renderPageLabels();
- if(route==='home')renderHome();else if(route==='global')renderGlobal();else{buildSeries();resetView();renderPositions();researchView.render(history,markets);}
+ if(route==='home')renderHome();else if(route==='global'){renderGlobal();renderPositions();}else{buildSeries();resetView();renderPositions();researchView.render(history,markets);globalView.renderCoverage?.(history,publicPrices);}
  window.scrollTo({top:0,behavior:'instant'});
 }
 for(const [i,id] of ['asset-a','asset-b'].entries())$('#'+id).onchange=()=>{
- const chosen=[...markets];chosen[i]=$('#'+id).value;if(chosen[0]===chosen[1])return;if(route==='global'){markets=chosen;analysisCache=null;annualStats=[];clearAccountCaches();renderNavigation();renderGlobal();}else window.location.hash='monitor/'+chosen.join('/');
+ const chosen=[...markets];chosen[i]=$('#'+id).value;if(chosen[0]===chosen[1])return;if(route==='global'){markets=chosen;analysisCache=null;annualStats=[];clearAccountCaches();renderNavigation();renderGlobal();renderPositions();}else window.location.hash='monitor/'+chosen.join('/');
 };
 window.addEventListener('hashchange',switchPage);
 function updateCollectionTime(){const time=lastSuccess??history?.lastSuccessfulSync;$('#updated').textContent=L('Dernière collecte : '+(time?date(time):'en attente'));}
@@ -170,7 +184,8 @@ $('#range').onchange=()=>{if(route==='global')renderGlobal();else{renderMetrics(
 $('#sync').onclick=async()=>{try{const r=await fetch('/api/sync',{method:'POST',headers:{'X-Oil-Client':'1'}});if(!r.ok)throw Error('HTTP '+r.status);lastStatusText=null;$('#status').textContent=L('Synchronisation demandée…');poller.request();}catch(e){lastStatusText=null;$('#status').textContent=L(e.message);}};
 $('#account-form').onsubmit=async e=>{e.preventDefault();const address=$('#address').value.trim();if(!/^0x[0-9a-fA-F]{40}$/.test(address)){$('#account-status').textContent=L('Saisissez une adresse publique valide : 0x suivi de 40 caractères hexadécimaux.');return;}
  try{const r=await fetch('/api/account',{method:'POST',headers:{'X-Oil-Client':'1','X-Oil-Address':address}});if(!r.ok)throw Error('HTTP '+r.status);chosenAddress=address;account=null;updateResearchAccount(null);clearAccountCaches();lastAccountVersion=null;$('#positions').innerHTML='';drawAll();$('#account-status').textContent=L('Lecture du compte et des sous-comptes en cours…');poller.request();}catch(e){$('#account-status').textContent=L('Échec du scan : '+e.message);}};
-$('#clear').onclick=async()=>{chosenAddress='';account=null;updateResearchAccount(null);$('#address').value='';$('#account-status').textContent=L('Adresse effacée. Aucune adresse enregistrée.');renderPositions();await fetch('/api/account',{method:'POST',headers:{'X-Oil-Client':'1','X-Oil-Address':'clear'}}).catch(()=>{});};
+$('#clear').onclick=async()=>{chosenAddress='';account=null;$('#address').value='';updateResearchAccount(null);$('#account-status').textContent=L('Adresse effacée. Aucune adresse enregistrée.');renderPositions();await fetch('/api/account',{method:'POST',headers:{'X-Oil-Client':'1','X-Oil-Address':'clear'}}).catch(()=>{});};
+$('#address').oninput=()=>updateResearchAccount(account);
 async function refresh(signal){
  if(document.hidden||signal.aborted)return;
  try{
@@ -179,19 +194,19 @@ async function refresh(signal){
   if(stateKey!==lastStatusText){lastStatusText=stateKey;$('#light').className=status.lastOk?'ok':'error';$('#status').textContent=L(status.syncing?'Collecte en cours…':status.queued?'Collecte demandée…':status.lastOk?'Collecteur actif · prochain passage à HH:01':'Collecte incomplète · nouvelle tentative sous 5 min');$('#sync').disabled=status.syncing;$('#error-code').textContent=status.errorCode?L('Code erreur')+': '+status.errorCode+' · data/collector.log':'';}
   if(status.lastSuccessfulSync!==lastSuccess){lastSuccess=status.lastSuccessfulSync;updateCollectionTime();}
   {const snapshot=await historyClient.load(status.historyVersion,signal);if(document.hidden||signal.aborted)return;
-   if(snapshot.changed){history=snapshot.data;seriesSource=null;frameCache.clear();analysisCache=null;annualStats=[];globalView.invalidate();if(route==='home')renderHome();else if(route==='global')renderGlobal();else{const old=view;buildSeries();researchView.render(history,markets);if(!old)resetView();else{view=old;drawAll();}}}}
-  if(route==='global'&&globalView.source==='public'){
-   try{const snapshot=await publicPriceClient.load(status.publicPricesVersion,signal);if(document.hidden||signal.aborted)return;const priorError=publicError;publicPrices=snapshot.data;publicError='';if(snapshot.changed||priorError){globalView.invalidate();renderGlobal();}}
+   if(snapshot.changed){history=snapshot.data;seriesSource=null;frameCache.clear();analysisCache=null;annualStats=[];if(route==='home')renderHome();else if(route==='global')renderGlobal();else{const old=view;buildSeries();researchView.render(history,markets);globalView.renderCoverage?.(history,publicPrices);if(!old)resetView();else{view=old;drawAll();}}}}
+  if(route!=='home'){
+   try{const snapshot=await publicPriceClient.load(status.publicPricesVersion,signal);if(document.hidden||signal.aborted)return;const priorError=publicError;publicPrices=snapshot.data;publicError='';if(snapshot.changed||priorError){if(route==='global')renderGlobal();else globalView.renderCoverage?.(history,publicPrices);}}
    catch(error){if(error.name==='AbortError'||document.hidden)return;const message=L('Références publiques indisponibles')+' · '+error.message;if(message!==publicError){publicError=message;renderGlobal();}}
   }
   if(chosenAddress&&status.accountReady&&status.accountVersion!==lastAccountVersion){const a=await get('/api/account',signal);if(document.hidden||signal.aborted)return;
-   if(!a.pending&&a.address?.toLowerCase()===chosenAddress.toLowerCase()){account=a;updateResearchAccount(a);lastAccountVersion=status.accountVersion;clearAccountCaches();if(route!=='home'&&route!=='global')renderPositions();}}
+   if(!a.pending&&a.address?.toLowerCase()===chosenAddress.toLowerCase()){account=a;updateResearchAccount(a);lastAccountVersion=status.accountVersion;clearAccountCaches();if(route!=='home')renderPositions();}}
   if(!startupLoaded){await refreshStartup(signal);if(document.hidden||signal.aborted)return;}
   return status.syncing||status.queued||(chosenAddress&&(!account||status.accountBusy))?2000:15000;
  }catch(e){if(e.name==='AbortError'||document.hidden)return;lastStatusText=null;$('#light').className='error';$('#status').textContent=L(history?'Collecteur inaccessible · données affichées conservées':'En attente du premier JSON…');$('#error-code').textContent=L('Erreur de connexion')+': '+e.message;return 15000;}
 }
 const poller=OilUpdates.createPoller({check:refresh,hidden:()=>document.hidden});
-$('#language').onchange=()=>{OilI18n.set($('#language').value);renderNavigation();renderPageLabels();if(route==='home')renderHome();else if(route==='global')renderGlobal();else{buildSeries();renderPositions();researchView.render(history,markets);drawAll();}poller.request();};
+$('#language').onchange=()=>{OilI18n.set($('#language').value);updateBlockLabels();renderNavigation();renderPageLabels();if(route==='home')renderHome();else if(route==='global'){renderGlobal();renderPositions();}else{buildSeries();renderPositions();researchView.render(history,markets);globalView.renderCoverage?.(history,publicPrices);drawAll();}poller.request();};
 async function refreshStartup(signal){try{const state=await get('/api/startup',signal);if(document.hidden||signal?.aborted)return;$('#startup').checked=state.enabled;$('#startup').disabled=false;startupLoaded=true;}catch(error){if(error.name!=='AbortError'&&!document.hidden)$('#startup').disabled=true;}}
 $('#startup').onchange=async()=>{
  const control=$('#startup'),wanted=control.checked;control.disabled=true;
@@ -202,4 +217,4 @@ function pauseInterface(){poller.pause();charts.forEach(c=>c.suspend());}
 function resumeInterface(){if(document.hidden)return;drawAll();poller.resume();}
 document.addEventListener('visibilitychange',()=>document.hidden?pauseInterface():resumeInterface());
 window.addEventListener('pagehide',pauseInterface);window.addEventListener('pageshow',resumeInterface);
-$('#address').value='';renderNavigation();switchPage();poller.resume();
+$('#address').value='';installBlocks();renderNavigation();switchPage();poller.resume();
