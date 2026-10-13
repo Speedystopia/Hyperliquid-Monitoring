@@ -1,90 +1,100 @@
 # Oil Perps Hyperliquid
 
-Application Windows portable : historique du funding et des clôtures du Brent (`xyz:BRENTOIL`) et du WTI (`xyz:CL`, affiché **WTIOIL**). Collecteur, stockage et serveur local écrits en **C17**, compilés avec Microsoft Visual C. Interface locale HTML/CSS/JavaScript sans bibliothèque, CDN ou service d’hébergement.
+A portable Windows application for Brent (`xyz:BRENTOIL`) and WTI (`xyz:CL`, displayed as **WTIOIL**) funding history and closing prices. The collector, storage layer, and local server are written in **C17** and compiled with Microsoft Visual C. The local HTML/CSS/JavaScript interface uses no external libraries, CDN, or hosting service.
 
-## Lancer : un seul fichier
+## Run: one executable
 
-Téléchargez **OilPerps.exe** depuis la dernière release, placez-le dans un dossier où vous pouvez écrire et double-cliquez dessus. Il contient l’interface, les sept langues, les licences et un premier historique. Aucun script de lancement, installateur, dossier web ou compilateur n’est nécessaire à l’utilisation.
+Download **OilPerps.exe** from the [latest release](https://github.com/Speedystopia/Oil-Perps-Hyperliquid/releases/latest), place it in a writable folder, and double-click it. The executable includes the interface, seven languages, licenses, and an initial market history. No launcher script, installer, separate web folder, or compiler is needed to use the application.
 
-Au premier lancement, il crée automatiquement **data/history.json** à côté de l’exécutable, puis rattrape les nouvelles données. Les versions suivantes conservent votre JSON existant. Le dossier `data/` contient également la sauvegarde et le journal ; il reste séparé pour conserver vos données.
+On its first launch, it creates **data/history.json** beside the executable and retrieves any newer data. Updates preserve your existing JSON. The `data/` folder also contains the backup and collection log; it remains separate so your history can be retained and inspected.
 
-L’interface s’ouvre à `http://127.0.0.1:18764/`. Dans le pied de page, **Start with Windows** active ou retire le démarrage automatique de votre session, sans droit administrateur. Le réglage utilise seulement une entrée nommée « Oil Perps Hyperliquid » dans le registre de l’utilisateur. L’ancien raccourci de démarrage de cette application est retiré lors du changement de ce réglage.
+The interface opens at `http://127.0.0.1:18764/`. In the footer, **Start with Windows** enables or disables automatic startup for your user session, without administrator privileges. This setting uses only a registry entry named **Oil Perps Hyperliquid** under the current user. The application's older startup shortcut is removed when this setting is changed.
 
-Fermer l’onglet ne ferme pas le collecteur. Son icône dans la zone de notification permet d’ouvrir l’interface, synchroniser ou quitter. `OilPerps.exe --stop` arrête le collecteur. `--install-startup` et `--remove-startup` sont les équivalents du réglage intégré en ligne de commande.
+**Automatic startup happens when you sign in to Windows**, after the PC starts. It does not run before sign-in. Windows may delay startup applications. Automatic startup runs the collector in the background without opening a browser tab.
 
-Windows 10/11 x64 ; connexion Internet pour les nouvelles données ; navigateur moderne. Le runtime C est statique : aucun Python, Node.js ou Visual Studio n’est nécessaire à l’utilisation. Le port 18764 doit être libre. Une seule instance par session Windows. Les licences intégrées sont consultables depuis **Licenses** dans l’interface.
+Closing the tab does not stop the collector. Its system tray icon lets you open the interface, synchronize, or quit. `OilPerps.exe --stop` stops the collector. `--install-startup` and `--remove-startup` are command-line equivalents of the integrated startup setting.
 
-## Données et horaire
+Requirements: Windows 10/11 x64, an Internet connection for new data, and a modern browser. The C runtime is statically linked: Python, Node.js, and Visual Studio are not required to run the app. Local port 18764 must be available. Only one instance runs per Windows session. Embedded licenses can be viewed through **Licenses** in the interface.
 
-- **data/history.json** contient les historiques de marché. Il est livré avec un premier téléchargement puis mis à jour automatiquement.
-- Collecte au démarrage, puis chaque heure à **HH:01 UTC**, soit également minute 01 dans les fuseaux à décalage entier, dont Europe/Paris. Une erreur réseau ou un dernier paiement encore absent déclenche une nouvelle tentative sous cinq minutes.
-- Au retour après une fermeture, veille ou coupure réseau, les intervalles absents sont redemandés à l’API. Le programme conserve toutes les observations déjà téléchargées.
-- Le funding source est horaire parce que l’API ne propose pas de funding natif 4H/1D. La pagination récupère l’historique disponible depuis le premier paiement, sans limite locale de 500 observations.
-- Les graphiques **4H** et **Daily** additionnent respectivement 4 ou 24 taux horaires. Aucune annualisation ni capitalisation. Une période manquant d’un paiement n’est pas affichée comme complète.
-- Les prix sont les **clôtures natives 4H et 1D**. Les bougies en formation sont exclues. L’API expose les 5 000 dernières bougies par intervalle. Au téléchargement initial, les 4H remontaient au début du funding des deux marchés ; cette couverture devra être revue si une installation future intervient plus de 5 000 périodes après leur lancement.
-- Les timestamps sont des millisecondes Unix UTC et représentent la **fin** de période. Le timestamp réel du paiement de funding est également conservé dans `sourceTime` ; `time` est arrondi à l’heure pour aligner les paiements et les clôtures.
-- Chaque série fournit son nombre de lignes, sa couverture et ses `missingRanges`. Aucune donnée absente n’est interpolée. Des trous devenus antérieurs à la rétention de l’API restent signalés, sans prix inventé.
+## Background operation and resource usage
 
-À 04:01 UTC, par exemple, le programme récupère le paiement de 04:00 et la bougie 4H clôturée à 04:00. Le funding 00:00–04:00 est la somme des paiements de 01:00, 02:00, 03:00 et 04:00. En daily, la période se termine à 00:00 UTC le lendemain.
+In normal background operation, the collector opens no console or browser window and plays no notification sounds. It stays available through its system tray icon. Collection failures are recorded in the log and shown in the interface; local startup problems, such as an unreadable history and backup or an unavailable port, can display an error dialog.
 
-Le JSON est écrit dans un fichier temporaire, vidé sur disque puis remplacé atomiquement. La version précédente est conservée dans `history.backup.json`. Si le fichier principal est corrompu, une sauvegarde valide est restaurée ; si les deux sont illisibles, le programme refuse de les écraser. Les erreurs publiques de collecte sont consignées dans `data/collector.log`.
+Worker threads sleep or wait between tasks. Market data is fetched at startup and hourly, with additional requests for recovery, retries, or manual synchronization. After scanning an address, account positions are refreshed every minute until the address is cleared or the collector exits. This account refresh continues if the browser tab is closed.
 
-Le collecteur ne s’exécute pas lorsque Windows est arrêté ou en veille. Le rattrapage intervient au réveil/démarrage. La machine doit rester allumée pour une collecte ponctuelle à chaque HH:01.
+The browser interface currently checks for updates every four seconds and can retrieve and parse the history JSON even when the data has not changed. Browser memory and processing are additional to the collector's own usage. Closing the interface reduces this work while automatic collection continues. Usage depends on history size, the browser, account scanning, and whether synchronization is running; there is no fixed CPU or memory guarantee.
 
-Le bouton **Sync now** demande une collecte supplémentaire ; il ne remplace pas la synchronisation automatique au lancement et à HH:01. Un échec affiche un code (`HTTP_429`, `HTTP_503`, `WINHTTP_12007`, etc.), conservé dans `lastError` du JSON et dans le journal avec l’heure UTC et le numéro de tentative. Les erreurs d’écriture sont également journalisées (`STORE_WIN32_...`).
+## Data and schedule
 
-## Langues
+- **data/history.json** stores the public market histories. An initial download is embedded in the executable and updated automatically.
+- Collection runs at startup and every hour at **HH:01 UTC**. This is also minute 01 in time zones with whole-hour offsets, including Europe/Paris. A network failure or a latest payment that has not yet appeared triggers another attempt within five minutes.
+- After shutdown, sleep, or a network interruption, missing intervals are requested again. All previously downloaded observations are retained.
+- The source funding data is hourly because the API has no native 4H/1D funding endpoint. Pagination retrieves the available history from the first payment, without a local 500-observation limit.
+- **4H** and **Daily** funding charts sum 4 or 24 hourly rates respectively. Chart values are not annualized or compounded. A period with a missing payment is not shown as complete.
+- Prices are **native 4H and 1D closing prices**. Open candles are excluded. The API exposes the latest 5,000 candles per interval. At the initial download, 4H prices reached the beginning of both markets' funding histories. A future installation more than 5,000 periods after market launch may have a shorter recoverable price history.
+- Timestamps are UTC Unix milliseconds and represent the **end** of a period. The actual funding payment timestamp is also retained in `sourceTime`; `time` is rounded down to the hour to align payments with closes.
+- Each series provides its observation count, coverage, and `missingRanges`. Missing values are never interpolated. Gaps older than the API's retention remain reported, without fabricated prices.
 
-L’interface s’affiche en anglais par défaut. Le sélecteur propose anglais, français, chinois simplifié, coréen, japonais, italien et espagnol. Le choix de langue est conservé localement dans le navigateur ; il ne contient aucune adresse de compte. Dates et nombres utilisent également la langue choisie. Les noms des marchés, les noms personnels de sous-comptes et les codes d’erreur ne nécessitent pas de traduction.
+For example, at 04:01 UTC, the app retrieves the 04:00 funding payment and the 4H candle that closed at 04:00. Funding for 00:00–04:00 is the sum of the payments at 01:00, 02:00, 03:00, and 04:00. A daily period ends at 00:00 UTC the following day.
 
-## Graphiques
+The JSON is written to a temporary file, flushed to disk, and replaced atomically. The previous version is retained as `history.backup.json`. If the primary file is corrupt, a valid backup is restored. If both are unreadable, the app refuses to overwrite them. Public collection errors are recorded in `data/collector.log`.
 
-Une ligne claire en pointillés indique **0 % · zéro funding** sur le graphique de funding et sur le graphique combiné.
+The collector does not run while Windows is shut down or asleep. Recovery happens after wake-up or startup. The computer must remain awake for collection to occur at every scheduled HH:01.
 
-Le sélecteur de langue est centré dans la bannière. Le bouton de collecte manuelle se trouve à côté de son état. Les noms **Brent ↗** et **WTI ↗** dans les cartes de prix ouvrent leurs marchés Hyperliquid.
+**Sync now** requests an additional collection; it does not replace automatic startup and hourly synchronization. Failures display a code such as `HTTP_429`, `HTTP_503`, or `WINHTTP_12007`, retained in the JSON's `lastError` and in the log with a UTC timestamp and attempt number. Storage errors are also logged as `STORE_WIN32_...`.
 
-Trois graphiques synchronisés : funding des deux marchés, clôtures des deux marchés, puis les quatre courbes superposées. Dans la vue combinée : funding en % sur l’axe gauche, prix USD sur l’axe droit ; les prix sont en pointillés. Choix 4H/Daily, 7/30/90 jours ou tout l’historique, horaires UTC ou locaux, zoom à la molette, déplacement par glisser et valeurs au survol. Double-clic pour réinitialiser.
+## Languages
 
-## Indicateurs historiques
+The interface defaults to English. The selector provides English, French, Simplified Chinese, Korean, Japanese, Italian, and Spanish. The selected language is saved locally in the browser and contains no account address. Dates and numbers also use the selected locale. Market identifiers, personal subaccount names, and error codes do not require translation.
 
-Les cartes et indicateurs se recalculent à chaque nouveau JSON et lors du choix **7 / 30 / 90 jours / tout l’historique**. Le sélecteur de période détermine leurs données ; le zoom manuel déplace seulement les graphiques. Le funding couvre les paiements horaires jusqu’au dernier paiement récupéré. Les cartes de prix gardent la dernière clôture et ajoutent la moyenne et la variation sur la période :
+## Charts
 
-- **Funding annualisé réalisé** = moyenne des taux horaires de la période sélectionnée × 8 760 × 100. Il décrit un rythme annuel calculé à partir de paiements passés ; il ne représente pas un paiement effectivement reçu sur une année entière. Les taux positifs correspondent au funding payé par un long et reçu par un short.
-- **Funding cumulé sur les 12 derniers mois**, conservé dans « Data coverage & methodology », = somme des taux horaires réalisés sur les 365 jours précédant le dernier paiement. L’historique disponible étant initialement inférieur à un an, la couverture est explicitement indiquée comme partielle. Les cartes principales affichent le cumul et la durée de la période sélectionnée.
-- **Corrélation des prix** = coefficient de Pearson × 100 sur les clôtures Brent/WTI aux timestamps communs de la période sélectionnée, en 4H ou daily selon la sélection. Les périodes avant le lancement du Brent sont exclues faute de prix Brent. −100 % représente une relation linéaire inverse parfaite, +100 % une relation positive parfaite. Il s’agit de la corrélation des niveaux de prix, pas de leurs rendements. La taille de l’échantillon et les dates communes sont affichées. Si les séries sont constantes ou trop courtes, la valeur reste indisponible.
+A light dashed **0% · zero funding** line appears on the funding chart and the combined chart.
 
-## Positions du compte
+The language selector is centered in the header. The manual synchronization button sits beside the collector status. **Brent ↗** and **WTI ↗** in the price cards link to their Hyperliquid markets.
 
-Saisissez une **adresse publique** dans le champ vide et cliquez sur **Scanner le compte**. Le programme consulte les positions ouvertes sur le DEX `xyz` du compte principal et de ses sous-comptes, puis actualise chaque minute. Le funding des positions concerne les deux marchés pétroliers uniquement.
+Three synchronized charts show funding for both markets, closing prices for both markets, and all four curves overlaid. The combined chart uses funding percentages on the left axis and USD prices on the right; price curves are dashed. Choose 4H/Daily, 7/30/90 days or full history, and UTC or local time. Scroll to zoom, drag to pan, hover to inspect values, and double-click to reset.
 
-- Prix d’entrée moyen pondéré par la **taille absolue** des positions. Les moyennes longues et courtes sont indiquées séparément lorsque les deux directions coexistent : leur moyenne globale n’est pas un prix de revient d’une position nette.
-- Funding net en USDC **depuis l’ouverture des positions encore ouvertes**, additionné entre comptes. Positif = reçu ; négatif = payé. La valeur provient de `-cumFunding.sinceOpen` ; la convention a été comparée aux paiements `userFunding.delta.usdc`. Il ne s’agit ni du taux de marché ni du funding historique de toutes les positions déjà fermées.
-- Lignes horizontales d’entrée moyenne et de liquidation dans les graphiques prix et combiné. Les seuils de liquidation de chaque compte restent visibles. S’il y en a plusieurs, une moyenne pondérée supplémentaire est affichée, explicitement **indicative**. Elle ne représente pas un seuil auquel les comptes se liquideraient ensemble.
-- Les seuils absents (`liquidationPx: null`) restent indisponibles ; ils ne sont pas remplacés par zéro. Ils sont exclus de la moyenne indicative. Les calculs des montants et des moyennes utilisent des entiers décimaux en JavaScript et sont arrondis uniquement à l’affichage.
-- Le tableau détaille tailles, entrées, liquidations et funding par compte. Un échec de sous-compte est signalé comme résultat partiel.
+## Historical indicators
 
-Le champ est **toujours vierge au lancement de la page**. L’adresse et les résultats du compte restent uniquement en mémoire, sans stockage dans le JSON, les journaux, les préférences navigateur ou le dépôt. **Effacer** retire les données en mémoire. L’adresse est transmise à l’API publique Hyperliquid pour la consultation. Aucun portefeuille à connecter, signature, clé privée ou ordre de trading.
+Cards and indicators recalculate whenever the JSON changes and whenever **7 / 30 / 90 days / full history** is selected. The period selector determines the data used by these cards; manual chart zoom only changes the charts. Funding includes hourly payments through the latest retrieved payment. Price cards retain the latest close and add the average close and price change for the selected period.
 
-La lecture automatique est limitée à 100 sous-comptes, avec avertissement au-delà. Les données API peuvent changer pendant la lecture de comptes distincts. Les lignes actuelles sont des repères horizontaux et ne reconstituent pas l’historique de votre position.
+- **Realized funding annualized** = the average hourly funding rate over the selected period × 8,760 × 100. It describes an annual pace calculated from past payments, not a payment actually received over an entire year. Positive market funding rates represent funding paid by a long and received by a short.
+- **Funding sum over the last 12 months**, available under **Data coverage & methodology**, sums realized hourly rates over the 365 days ending at the latest payment. Initial history is shorter than one year, so coverage is explicitly marked partial. The main cards show cumulative funding and observed duration for the selected period.
+- **Price correlation** = Pearson's correlation coefficient × 100 for Brent/WTI closes with matching timestamps in the selected period, using 4H or Daily according to the selection. Periods before Brent's launch are excluded because there is no Brent price. −100% is a perfect inverse linear relationship; +100% is a perfect positive relationship. This measures price levels, not returns. The sample size and matched dates are shown. Constant series or insufficient data return no value.
 
-## Compiler et vérifier
+## Account positions
 
-Installez Visual Studio 2022 Build Tools avec la charge **Développement Desktop en C++** puis exécutez **tools/build.cmd**. Il détecte MSVC, compile un exécutable x64 C17 avec `/MT`, et exécute les tests C. Si Node.js est installé, les tests de calculs de l’interface sont aussi exécutés.
+Enter a **public address** in the empty field and click **Scan account**. The app reads open positions on the `xyz` DEX for the main account and its subaccounts, then refreshes every minute. Position funding is shown only for the two oil markets.
+
+- Average entry price is weighted by **absolute position size**. Long and short entry averages are also shown separately when both directions coexist. Their combined average is not a break-even price for a net position.
+- Net funding in USDC is measured **since the opening of positions that are still open**, summed across accounts. Positive means received; negative means paid. The value comes from `-cumFunding.sinceOpen`; this convention was compared with `userFunding.delta.usdc` payments. It is separate from market funding rates and from funding for previously closed positions.
+- Horizontal average-entry and liquidation lines appear on the price and combined charts. Actual liquidation thresholds remain visible for each account. When there are multiple thresholds, an additional weighted average is explicitly labeled **indicative**. It is not a price at which the accounts would liquidate together.
+- Missing thresholds (`liquidationPx: null`) remain unavailable rather than being replaced with zero. They are excluded from the indicative average. Amounts and averages use decimal integers in JavaScript and are rounded only for display.
+- The table lists position sizes, entries, liquidations, and funding by account. A failed subaccount read is reported as a partial result.
+
+The address field is **always empty when the page starts**. The address and account results remain only in memory; they are not stored in the market JSON, logs, browser preferences, or repository. **Clear** removes the in-memory account data. The address is sent to Hyperliquid's public API for the requested lookup. No wallet connection, signature, private key, or trading order is required.
+
+Automatic account scanning is limited to 100 subaccounts, with a warning if the limit is reached. API values can change while separate accounts are being read. Current horizontal position levels are references and do not reconstruct position history.
+
+## Build and verify
+
+Install Visual Studio 2022 Build Tools with the **Desktop development with C++** workload, then run **tools/build.cmd**. It detects MSVC, compiles an x64 C17 executable with `/MT`, and runs the C tests. If Node.js is installed, the interface calculation tests also run.
 
 ```powershell
 .\tools\build.cmd
-Start-Process .\OilPerps.exe -ArgumentList '--sync' -Wait
+Start-Process .\OilPerps.exe -ArgumentList '--sync' -WindowStyle Hidden -Wait
 ```
 
-`--sync` effectue une collecte unique, écrit le JSON puis quitte (code 0 : succès, 1 : échec partiel, 2 : erreur locale, 3 : collecteur déjà actif). `--background` démarre le collecteur sans ouvrir d’onglet. Pour recopier le dossier, arrêter d’abord le collecteur afin d’emporter un JSON cohérent.
+`--sync` performs one collection, saves the JSON, and exits. Exit codes: 0 = success, 1 = partial failure, 2 = local error, 3 = collector already running. `--background` starts the collector without opening a tab. Stop the collector before copying the data folder to obtain a consistent snapshot.
 
-Organisation : `src/` collecteur C et intégration Windows ; `web/` interface ; `vendor/` cJSON 1.7.19 sous licence MIT ; `tests/` tests de fusion, déduplication, trous, sauvegarde/lecture, agrégation et précision ; `.github/workflows/` compilation automatisée Windows ; `tools/build.cmd` réservé au développement. Le compilateur de ressources Windows incorpore l’interface, les licences et le JSON initial dans le binaire. Le build vérifie la présence des ressources et la lecture du JSON intégré.
+Repository layout: `src/` contains the C collector and Windows integration; `web/` contains the interface sources; `vendor/` contains cJSON 1.7.19 under the MIT license; `tests/` covers merging, deduplication, gaps, JSON round trips, funding aggregation, period selection, and decimal precision; `.github/workflows/` provides automated Windows builds; `tools/build.cmd` is for development only. The Windows resource compiler embeds the interface, licenses, and initial JSON into the executable. The build also verifies that the resources are present and that the embedded JSON is readable.
 
 ## Sources
 
-- [API info Hyperliquid : pagination, bougies, sous-comptes](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint)
-- [API perps : funding et état des positions](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/perpetuals)
-- [`meta` du DEX xyz](https://api.hyperliquid.xyz/info) : requête POST `{"type":"meta","dex":"xyz"}` pour les noms canoniques.
+- [Hyperliquid info API: pagination, candles, and subaccounts](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint)
+- [Hyperliquid perps API: funding and position state](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/perpetuals)
+- [`meta` for the xyz DEX](https://api.hyperliquid.xyz/info): POST `{"type":"meta","dex":"xyz"}` returns canonical market names.
 - [cJSON v1.7.19](https://github.com/DaveGamble/cJSON/releases/tag/v1.7.19)
 
-Le dépôt et le paquet distribuent uniquement le code et des données publiques de marché. Licence MIT pour le logiciel, licence tierce conservée dans `vendor/LICENSE.cJSON`.
+The repository and package distribute only software and public market data. The software uses the MIT license; the third-party license is retained in `vendor/LICENSE.cJSON` and embedded in the executable.
