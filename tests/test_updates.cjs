@@ -50,7 +50,7 @@ async function testPoller(){
 async function testInterface(){
  const fs=require('node:fs'),vm=require('node:vm'),math=require('../web/math.js');
  const timers=new Map(),rafs=new Map(),elements=new Map(),documentEvents={},windowEvents={},resizeCallbacks=[];
- const requests={},calculations={},writes={};let timerId=0,rafId=0,canvasResizes=0,revision=1,hours=120,fundingNegative=true,accountReady=false,accountVersion=0;
+ const requests={},calculations={},writes={};let timerId=0,rafId=0,canvasResizes=0,revision=1,hours=120,fundingNegative=true,fundingMultiplier=1,tltFundingRate=.0001,accountReady=false,accountVersion=0;
  const context2d=new Proxy({measureText:text=>({width:text.length*6})},{get:(target,key)=>target[key]||(()=>{})});
  function element(id){if(elements.has(id))return elements.get(id);let html='',width=0,height=0;
   const el={id,value:'',checked:false,disabled:false,style:{},dataset:{},events:{},parentElement:{},textContent:'',offsetWidth:180,offsetHeight:100,className:'',hidden:false,classList:{toggle(){},contains(){return false;}},
@@ -64,7 +64,7 @@ async function testInterface(){
  const frames=['4h','1d'].map(frame=>{const el=element('frame-'+frame);el.dataset.frame=frame;return el;});
  function fixture(){const data={schemaVersion:3,lastSuccessfulSync:hours*math.HOUR,markets:{}};
   for(const [i,m] of require('../web/catalog.js').keys.entries()){const market={price4hReachesFundingStart:true};
-   for(const [name,span] of [['fundingHourly',1],['close4h',4],['close1d',24]]){const rows=Array.from({length:Math.floor(hours/span)},(_,j)=>({time:(j+1)*span*math.HOUR,...(name==='fundingHourly'?{fundingRate:.00001*(i+1)*(i===1&&fundingNegative?-1:1)}:{close:100+i*10+j*.3+(i===8?-10:10)*Math.sin(j)})}));market[name]={rows,count:rows.length,firstTime:rows[0]?.time||0,lastTime:rows.at(-1)?.time||0,missingRanges:[]};}
+   for(const [name,span] of [['fundingHourly',1],['close4h',4],['close1d',24]]){const rows=Array.from({length:Math.floor(hours/span)},(_,j)=>({time:(j+1)*span*math.HOUR,...(name==='fundingHourly'?{fundingRate:m==='TLT'?tltFundingRate:.00001*(i+1)*(i===1?fundingMultiplier*(fundingNegative?-1:1):1)}:{close:100+i*10+j*.3+(i===8?-10:10)*Math.sin(j)})}));market[name]={rows,count:rows.length,firstTime:rows[0]?.time||0,lastTime:rows.at(-1)?.time||0,missingRanges:[]};}
    data.markets[m]=market;
   }return data;
  }
@@ -101,7 +101,13 @@ async function testInterface(){
  for(let i=0;i<catalog.keys.length;i++)for(let j=i+1;j<catalog.keys.length;j++){const chosen=[catalog.keys[i],catalog.keys[j]];context.window.location.hash='#monitor/'+chosen.join('/');windowEvents.hashchange();draw();for(const market of chosen)assert.ok(element('metrics').innerHTML.includes(catalog.assets[market].name));assert.equal(element('home-view').hidden,true);}
  context.window.location.hash='#global';windowEvents.hashchange();draw();assert.equal(element('global-view').hidden,false);for(const asset of catalog.keys)assert.ok(element('matrix').innerHTML.includes(catalog.assets[asset].name.replace(/&/g,'&amp;')));
  assert.ok(element('positive-pairs').innerHTML.includes('same-direction'));assert.ok(element('inverse-pairs').innerHTML.includes('inverse-row'));assert.ok(!element('matrix').innerHTML.includes('style='));assert.equal(element('monitor-toolbar').hidden,true);assert.ok(element('matrix-method').textContent.includes('Daily'));assert.ok(element('matrix-method').textContent.includes('Tout l’historique'));const matrixCalls=calculations.correlationMatrix;await tick();assert.equal(calculations.correlationMatrix,matrixCalls);assert.equal(requests['/api/history'],transfers);element('correlation-mode').value='levels';element('correlation-mode').onchange();assert.equal(calculations.correlationMatrix,matrixCalls+1);
- assert.ok(element('funding-pairs').innerHTML.includes('negative'));assert.ok(element('funding-pairs').innerHTML.includes('WTI'));const annualCalls=calculations.fundingStats;await tick();assert.equal(calculations.fundingStats,annualCalls);fundingNegative=false;revision++;await tick();assert.ok(element('funding-pairs').innerHTML.includes('Aucune paire'));transfers=requests['/api/history'];
+ assert.ok(element('funding-pairs').innerHTML.includes('negative'));assert.ok(element('funding-pairs').innerHTML.includes('WTI'));const annualCalls=calculations.fundingStats;await tick();assert.equal(calculations.fundingStats,annualCalls);
+ let fundingHtml=element('funding-pairs').innerHTML;assert.ok(fundingHtml.includes('Corrélation · tout l’historique'));assert.ok(fundingHtml.includes('Short A · Long B · montants égaux'));assert.ok(/class="funding-net funding-net-below">-/.test(fundingHtml));assert.ok(/class="funding-net funding-net-below">\+/.test(fundingHtml));assert.ok(fundingHtml.includes('Référence TLT'));
+ const netValues=html=>[...html.matchAll(/class="funding-net funding-net-\w+">([^<]+)/g)].map(m=>m[1]);const previousNet=netValues(fundingHtml);
+ tltFundingRate=.00003;revision++;await tick();assert.ok(element('funding-pairs').innerHTML.includes('funding-net-near'));assert.deepEqual(netValues(element('funding-pairs').innerHTML),previousNet);
+ tltFundingRate=0;revision++;await tick();assert.ok(element('funding-pairs').innerHTML.includes('funding-net-above'));
+ fundingMultiplier=2;revision++;await tick();assert.notDeepEqual(netValues(element('funding-pairs').innerHTML),previousNet);
+ fundingNegative=false;revision++;await tick();assert.ok(element('funding-pairs').innerHTML.includes('Aucune paire'));transfers=requests['/api/history'];
  context.window.location.hash='#home';windowEvents.hashchange();draw();assert.equal(element('home-view').hidden,false);assert.equal(element('monitor-content').hidden,true);assert.equal((element('market-cards').innerHTML.match(/class=\"market-card/g)||[]).length,2);
  const homeCalculations={...calculations};await tick();assert.deepEqual(calculations,homeCalculations);assert.equal(requests['/api/history'],transfers);
  document.hidden=true;documentEvents.visibilitychange();
