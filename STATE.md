@@ -1,6 +1,6 @@
 # État du projet — 13 octobre 2026
 
-Dépôt public : https://github.com/Speedystopia/Hyperliquid-Monitoring ; branche main. v3.3.0 compilée et installée sur le Bureau, publication GitHub en cours. SHA256 404119a4f8fc7f3ab4c17eb1435698ee1b045aa46b8c2631c93fc2a7b8b37db3, 17543168octets. Build et tests locaux réussis ; vérification interface effectuée. Actualiser avec commit et CI après publication.
+Dépôt public : https://github.com/Speedystopia/Hyperliquid-Monitoring ; branche main. v3.3.0 livrée : https://github.com/Speedystopia/Hyperliquid-Monitoring/releases/tag/v3.3.0 . Exe Bureau identique à l’asset (17543168octets), SHA256 404119a4f8fc7f3ab4c17eb1435698ee1b045aa46b8c2631c93fc2a7b8b37db3. Build/test Windows CI réussi sur commit EXACT de release 73b35b3cf518b7731d890baaa9cf11fe2be3db58, run38444829711. Vérification navigateur finale : aucun ancien sélecteur,15boutons, archive en dernier, compte de test effacé et analyse verrouillée. Capture publique work/v33-same-funding.png horsGit.
 
 ## Installation et collecte
 
