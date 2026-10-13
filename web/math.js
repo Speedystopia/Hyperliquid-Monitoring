@@ -20,6 +20,13 @@
   return [...map.values()].filter(b=>b.seen.size===hours).map(b=>({time:b.time,value:b.value*100})).sort((a,b)=>a.time-b.time);
  }
  function positionSummary(positions,market){const rows=positions.filter(p=>p.market===market);return {rows,entry:weighted(rows,'entryPrice'),liquidation:weighted(rows,'liquidationPrice'),funding:received(rows),long:weighted(rows.filter(r=>decimal(r.size)>0n),'entryPrice'),short:weighted(rows.filter(r=>decimal(r.size)<0n),'entryPrice')};}
+ function selectWindow(rows,start,end){return rows.filter(r=>r.time>start&&r.time<=end);}
+ function priceStats(rows,start,end){
+  const selected=selectWindow(rows,start,end),latest=selected.at(-1);
+  if(!latest)return {latest:null,average:null,change:null,count:0};
+  let baseline=selected[0];for(const r of rows){if(r.time<=start)baseline=r;else break;}
+  return {latest,average:selected.reduce((total,r)=>total+r.value,0)/selected.length,change:baseline.value>0?(latest.value/baseline.value-1)*100:null,count:selected.length};
+ }
  function fundingStats(rows){
   if(!rows.length)return {annualized:null,total:null,rolling:null,count:0,days:0,partial:true};
   const latest=rows.at(-1).time,cutoff=latest-365*24*HOUR;let total=0,rolling=0;
@@ -34,6 +41,6 @@
   }
   return {percent:n>=2&&xx>0&&yy>0?Math.max(-1,Math.min(1,xy/Math.sqrt(xx*yy)))*100:null,count:n,first,last};
  }
- const api={HOUR,SCALE,decimal,fixed,weighted,received,aggregateFunding,positionSummary,fundingStats,correlation};
+ const api={HOUR,SCALE,decimal,fixed,weighted,received,aggregateFunding,positionSummary,fundingStats,correlation,selectWindow,priceStats};
  if(typeof module!=='undefined')module.exports=api;else root.OilMath=api;
 })(globalThis);

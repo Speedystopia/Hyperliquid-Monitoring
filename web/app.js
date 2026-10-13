@@ -11,25 +11,38 @@ function buildSeries(){
  if(!history)return;
  series=markets.map((m,i)=>{const d=history.markets[m];return {name:names[m],market:m,color:colors[i],funding:M.aggregateFunding(d.fundingHourly.rows,frame==='4h'?4:24),price:d[frame==='4h'?'close4h':'close1d'].rows.map(r=>({time:r.time,value:r.close}))};});
  $('#funding-frame').textContent=L('/ '+(frame==='4h'?'4H':'1D'));
- $('#metrics').innerHTML=series.flatMap(s=>{const price=s.price.at(-1),funding=s.funding.at(-1),cls=s.market==='BRENTOIL'?'brent-text':'wti-text';return [`<div class="metric"><label><a class="market-link" href="https://app.hyperliquid.xyz/trade/${s.market==='BRENTOIL'?'xyz:BRENTOIL':'xyz:WTIOIL'}" target="_blank" rel="noopener noreferrer">${s.name} ↗</a> · clôture ${frame==='4h'?'4H':'daily'}</label><strong class="${cls}">${price?fmt(price.value):'—'} <small>USD</small></strong><small>${price?date(price.time):'Aucune donnée'}</small></div>`,`<div class="metric"><label>${s.name} · funding ${frame==='4h'?'4H':'daily'}</label><strong class="${cls}">${funding?fmt(funding.value,5):'—'} <small>%</small></strong><small>${funding?date(funding.time):'Période complète indisponible'}</small></div>`];}).join('');
- OilI18n.tree($('#metrics'));renderInsights();renderCoverage();
+ renderMetrics();renderInsights();renderCoverage();
+}
+function selectedWindow(){
+ const all=markets.flatMap(m=>[history.markets[m].fundingHourly.rows,history.markets[m][frame==='4h'?'close4h':'close1d'].rows]);
+ const end=Math.max(...all.filter(r=>r.length).map(r=>r.at(-1).time)),first=Math.min(...all.filter(r=>r.length).map(r=>r[0].time)),days=Number($('#range').value);
+ return {start:days?end-days*24*M.HOUR:first-M.HOUR,end,label:days?days+' jours':'Tout l’historique'};
+}
+function renderMetrics(){
+ if(!history||!series.length)return;const window=selectedWindow();
+ $('#metrics').innerHTML=series.flatMap(s=>{
+  const price=M.priceStats(s.price,window.start,window.end),fundingRows=M.selectWindow(history.markets[s.market].fundingHourly.rows,window.start,window.end),funding=M.fundingStats(fundingRows),cls=s.market==='BRENTOIL'?'brent-text':'wti-text';
+  return [`<div class="metric"><label><a class="market-link" href="https://app.hyperliquid.xyz/trade/${s.market==='BRENTOIL'?'xyz:BRENTOIL':'xyz:WTIOIL'}" target="_blank" rel="noopener noreferrer">${s.name} ↗</a> · clôture ${frame==='4h'?'4H':'daily'}</label><strong class="${cls}">${price.latest?fmt(price.latest.value):'—'} <small>USD</small></strong><small>${price.latest?date(price.latest.time):'Aucune donnée'}</small><p class="hint">${window.label} · Moyenne des clôtures : ${fmt(price.average)} USD<br>Variation du prix : ${fmt(price.change)} %</p></div>`,
+   `<div class="metric"><label>${s.name} · funding cumulé · ${window.label}</label><strong class="${cls}">${fmt(funding.total,5)} <small>%</small></strong><small>${fundingRows.length?date(fundingRows[0].time)+' → '+date(fundingRows.at(-1).time):'Aucune donnée'}</small><p class="hint">${funding.count.toLocaleString(OilI18n.locale)} paiements horaires · ${fmt(funding.days,1)} jours observés</p></div>`];
+ }).join('');OilI18n.tree($('#metrics'));
 }
 function renderInsights(){
- const cards=markets.map((m,i)=>{const f=M.fundingStats(history.markets[m].fundingHourly.rows);return `<div class="metric"><label>${names[m]} · funding annualisé réalisé</label><strong class="${i?'wti-text':'brent-text'}">${fmt(f.annualized,3)} <small>% / an</small></strong><p class="hint">Moyenne des ${f.count.toLocaleString(OilI18n.locale)} paiements horaires × 8 760<br>Funding cumulé sur 12 mois : <b>${fmt(f.rolling,3)} %</b>${f.partial?' · historique partiel':''}<br>Cumul total : ${fmt(f.total,3)} % · ${fmt(f.days,1)} jours observés</p></div>`;});
- const corr=M.correlation(series[0].price,series[1].price);cards.push(`<div class="metric correlation"><label>Corrélation des prix Brent / WTI · ${frame==='4h'?'4H':'Daily'}</label><strong>${fmt(corr.percent,2)} <small>%</small></strong><p class="hint">Pearson sur tout l’historique commun<br>${corr.count.toLocaleString(OilI18n.locale)} clôtures appariées${corr.first?'<br>'+date(corr.first)+' → '+date(corr.last):''}<br>−100 % : inverse · 0 % : linéaire nulle · +100 % : même sens</p></div>`);
+ if(!history||!series.length)return;const window=selectedWindow();
+ const cards=markets.map((m,i)=>{const f=M.fundingStats(M.selectWindow(history.markets[m].fundingHourly.rows,window.start,window.end));return `<div class="metric"><label>${names[m]} · funding annualisé réalisé</label><strong class="${i?'wti-text':'brent-text'}">${fmt(f.annualized,3)} <small>% / an</small></strong><p class="hint">Période sélectionnée : ${window.label}<br>Moyenne des ${f.count.toLocaleString(OilI18n.locale)} paiements horaires × 8 760<br>Funding cumulé sur la période : <b>${fmt(f.total,3)} %</b><br>${fmt(f.days,1)} jours observés</p></div>`;});
+ const corr=M.correlation(M.selectWindow(series[0].price,window.start,window.end),M.selectWindow(series[1].price,window.start,window.end));cards.push(`<div class="metric correlation"><label>Corrélation des prix Brent / WTI · ${frame==='4h'?'4H':'Daily'}</label><strong>${fmt(corr.percent,2)} <small>%</small></strong><p class="hint">Période sélectionnée : ${window.label}<br>Pearson sur les clôtures communes de la période<br>${corr.count.toLocaleString(OilI18n.locale)} clôtures appariées${corr.first?'<br>'+date(corr.first)+' → '+date(corr.last):''}<br>−100 % : inverse · 0 % : linéaire nulle · +100 % : même sens</p></div>`);
  $('#insights').innerHTML=cards.join('');
  OilI18n.tree($('#insights'));
 }
 function resetView(){
  if(!series.length)return;const rows=series.flatMap(s=>[...s.price,...s.funding]);if(!rows.length)return;
- const end=Math.max(...rows.map(r=>r.time)),earliest=Math.min(...rows.map(r=>r.time)),days=Number($('#range').value);
- view={start:days?Math.max(earliest,end-days*24*M.HOUR):earliest,end:end+step()*.3};drawAll();
+ const window=selectedWindow();view={start:window.start,end:window.end+step()*.3};drawAll();
 }
 function renderCoverage(){
  let body='';for(const m of markets){const d=history.markets[m];for(const [key,label] of [['fundingHourly','Funding source 1H'],['close4h','Clôtures 4H'],['close1d','Clôtures 1D']]){const v=d[key],missing=v.missingRanges.reduce((sum,r)=>sum+r.count,0);body+=`<tr><td>${names[m]}</td><td>${label}</td><td>${v.count.toLocaleString(OilI18n.locale)}</td><td>${v.firstTime?date(v.firstTime):'—'}</td><td>${v.lastTime?date(v.lastTime):'—'}</td><td>${missing?'⚠ '+missing:'0'}</td></tr>`;}}
  $('#coverage').innerHTML=`<div class="position-detail"><table><thead><tr><th>Marché</th><th>Série</th><th>Observations</th><th>Première fin de période</th><th>Dernière</th><th>Manquantes</th></tr></thead><tbody>${body}</tbody></table></div><p>${markets.map(m=>`${names[m]} : ${history.markets[m].price4hReachesFundingStart?'les prix 4H atteignent le début du funding':'début des prix 4H postérieur au funding, historique plus ancien indisponible à cette granularité'}`).join(' · ')}</p>`;
  $('#updated').textContent=L('Dernière collecte : '+(history.lastSuccessfulSync?date(history.lastSuccessfulSync):'en attente'));
  OilI18n.tree($('#coverage'));
+ const annual=document.createElement('p');annual.textContent=L(markets.map(m=>{const f=M.fundingStats(history.markets[m].fundingHourly.rows);return names[m]+' · Funding cumulé sur 12 mois : '+fmt(f.rolling,3)+' %'+(f.partial?' · historique partiel':'');}).join(' · '));$('#coverage').append(annual);
 }
 function summaries(){return markets.map(m=>({...M.positionSummary(account?.positions||[],m),market:m}));}
 function renderPositions(){
@@ -88,7 +101,7 @@ class Chart{
 }
 const charts=[new Chart('funding','funding'),new Chart('price','price'),new Chart('combined','combined')];function drawAll(){charts.forEach(c=>c.draw());}
 document.querySelectorAll('[data-frame]').forEach(button=>button.onclick=()=>{frame=button.dataset.frame;document.querySelectorAll('[data-frame]').forEach(b=>b.classList.toggle('active',b===button));buildSeries();resetView();});
-$('#range').onchange=resetView;$('#timezone').onchange=()=>{buildSeries();renderPositions();drawAll();};$('#reset').onclick=resetView;$('#overlays').onchange=drawAll;
+$('#range').onchange=()=>{renderMetrics();renderInsights();resetView();};$('#timezone').onchange=()=>{buildSeries();renderPositions();drawAll();};$('#reset').onclick=resetView;$('#overlays').onchange=drawAll;
 $('#sync').onclick=async()=>{try{const r=await fetch('/api/sync',{method:'POST',headers:{'X-Oil-Client':'1'}});if(!r.ok)throw Error('HTTP '+r.status);$('#status').textContent=L('Synchronisation demandée…');}catch(e){$('#status').textContent=L(e.message);}};
 $('#account-form').onsubmit=async e=>{e.preventDefault();const address=$('#address').value.trim();if(!/^0x[0-9a-fA-F]{40}$/.test(address)){$('#account-status').textContent=L('Saisissez une adresse publique valide : 0x suivi de 40 caractères hexadécimaux.');return;}
  try{const r=await fetch('/api/account',{method:'POST',headers:{'X-Oil-Client':'1','X-Oil-Address':address}});if(!r.ok)throw Error('HTTP '+r.status);chosenAddress=address;account=null;lastAccountVersion=0;$('#positions').innerHTML='';drawAll();$('#account-status').textContent=L('Lecture du compte et des sous-comptes en cours…');}catch(e){$('#account-status').textContent=L('Échec du scan : '+e.message);}};
@@ -101,4 +114,10 @@ async function refresh(){
  }catch(e){$('#light').className='error';$('#status').textContent=L(history?'Collecteur inaccessible · données affichées conservées':'En attente du premier JSON…');$('#error-code').textContent=L('Erreur de connexion')+': '+e.message;}finally{statusTimerBusy=false;}
 }
 $('#language').onchange=()=>{OilI18n.set($('#language').value);buildSeries();renderPositions();drawAll();refresh();};
-$('#address').value='';refresh();setInterval(refresh,4000);
+async function refreshStartup(){try{const state=await get('/api/startup');$('#startup').checked=state.enabled;$('#startup').disabled=false;}catch{$('#startup').disabled=true;}}
+$('#startup').onchange=async()=>{
+ const control=$('#startup'),wanted=control.checked;control.disabled=true;
+ try{const response=await fetch('/api/startup',{method:'POST',headers:{'X-Oil-Client':'1','X-Oil-Startup':wanted?'on':'off'}}),state=await response.json();control.checked=state.enabled;if(!response.ok||state.errorCode)throw Error('STARTUP_WIN32_'+state.errorCode);}
+ catch(error){$('#error-code').textContent=L('Réglage du démarrage impossible')+' · '+error.message;await refreshStartup();}finally{control.disabled=false;}
+};
+$('#address').value='';refresh();refreshStartup();setInterval(refresh,4000);

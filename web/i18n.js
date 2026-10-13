@@ -4,6 +4,15 @@ const OilI18n=(()=>{
  const languages={en:1,fr:0,zh:2,ko:3,ja:4,it:5,es:6};
  const locales={en:'en-GB',fr:'fr-FR',zh:'zh-CN',ko:'ko-KR',ja:'ja-JP',it:'it-IT',es:'es-ES'};
  const rows=[
+ ['Démarrer avec Windows','Start with Windows','随Windows启动','Windows와 함께 시작','Windows起動時に開始','Avvia con Windows','Iniciar con Windows'],
+ ['Réglage du démarrage impossible','Unable to change startup setting','无法更改启动设置','시작 설정 변경 불가','起動設定を変更できません','Impossibile modificare l’avvio','No se puede cambiar el inicio'],
+ ['Licences','Licenses','许可证','라이선스','ライセンス','Licenze','Licencias'],
+ ['Période sélectionnée','Selected period','所选周期','선택 기간','選択期間','Periodo selezionato','Período seleccionado'],
+ ['Moyenne des clôtures','Average close','平均收盘价','평균 종가','平均終値','Chiusura media','Cierre medio'],
+ ['Variation du prix','Price change','价格变动','가격 변동','価格変化','Variazione del prezzo','Variación del precio'],
+ ['funding cumulé','cumulative funding','累计资金费率','누적 펀딩','累計資金調達率','funding cumulato','funding acumulado'],
+ ['Funding cumulé sur la période','Cumulative funding for the period','周期内资金费率累计','기간 누적 펀딩','期間の資金調達率累計','Funding cumulato nel periodo','Funding acumulado del período'],
+ ['Pearson sur les clôtures communes de la période','Pearson on matching closes in the period','周期内共同收盘价的皮尔逊相关','기간 내 공통 종가의 피어슨 상관','期間内の共通終値のピアソン相関','Pearson sulle chiusure comuni del periodo','Pearson sobre cierres comunes del período'],
  ['Funding','Funding','资金费率','펀딩','資金調達率','Funding','Funding'],
  ['Intervalle','Interval','时间间隔','간격','間隔','Intervallo','Intervalo'],
  ['Funding Brent et WTI','Brent and WTI funding','布伦特与WTI资金费率','브렌트 및 WTI 펀딩','ブレントとWTIの資金調達率','Funding Brent e WTI','Funding Brent y WTI'],

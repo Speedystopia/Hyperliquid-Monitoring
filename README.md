@@ -2,15 +2,17 @@
 
 Application Windows portable : historique du funding et des clôtures du Brent (`xyz:BRENTOIL`) et du WTI (`xyz:CL`, affiché **WTIOIL**). Collecteur, stockage et serveur local écrits en **C17**, compilés avec Microsoft Visual C. Interface locale HTML/CSS/JavaScript sans bibliothèque, CDN ou service d’hébergement.
 
-## Lancer
+## Lancer : un seul fichier
 
-1. Téléchargez le ZIP de la release et extrayez **tout** le dossier dans un emplacement où vous pouvez écrire.
-2. Double-cliquez sur **Lancer.cmd** ou **OilPerps.exe**. L’interface s’ouvre à `http://127.0.0.1:18764/` dans le navigateur par défaut.
-3. Pour garder la collecte après les redémarrages, lancez **Installer-demarrage.cmd**. Aucun droit administrateur n’est nécessaire. Le collecteur démarre discrètement à l’ouverture de votre session Windows.
+Téléchargez **OilPerps.exe** depuis la dernière release, placez-le dans un dossier où vous pouvez écrire et double-cliquez dessus. Il contient l’interface, les sept langues, les licences et un premier historique. Aucun script de lancement, installateur, dossier web ou compilateur n’est nécessaire à l’utilisation.
 
-Fermer l’onglet ne ferme pas le collecteur. Son icône dans la zone de notification permet d’ouvrir l’interface, synchroniser ou quitter. **Retirer-demarrage.cmd** retire uniquement le démarrage automatique. Pour arrêter le collecteur en ligne de commande : `OilPerps.exe --stop`.
+Au premier lancement, il crée automatiquement **data/history.json** à côté de l’exécutable, puis rattrape les nouvelles données. Les versions suivantes conservent votre JSON existant. Le dossier `data/` contient également la sauvegarde et le journal ; il reste séparé pour conserver vos données.
 
-Windows 10/11 x64 ; connexion Internet pour les nouvelles données ; navigateur moderne. L’exécutable utilise le runtime C statique : aucun Python, Node.js ou Visual Studio n’est nécessaire à l’utilisation. Le port 18764 doit être libre. Une seule instance par session Windows.
+L’interface s’ouvre à `http://127.0.0.1:18764/`. Dans le pied de page, **Start with Windows** active ou retire le démarrage automatique de votre session, sans droit administrateur. Le réglage utilise seulement une entrée nommée « Oil Perps Hyperliquid » dans le registre de l’utilisateur. L’ancien raccourci de démarrage de cette application est retiré lors du changement de ce réglage.
+
+Fermer l’onglet ne ferme pas le collecteur. Son icône dans la zone de notification permet d’ouvrir l’interface, synchroniser ou quitter. `OilPerps.exe --stop` arrête le collecteur. `--install-startup` et `--remove-startup` sont les équivalents du réglage intégré en ligne de commande.
+
+Windows 10/11 x64 ; connexion Internet pour les nouvelles données ; navigateur moderne. Le runtime C est statique : aucun Python, Node.js ou Visual Studio n’est nécessaire à l’utilisation. Le port 18764 doit être libre. Une seule instance par session Windows. Les licences intégrées sont consultables depuis **Licenses** dans l’interface.
 
 ## Données et horaire
 
@@ -45,11 +47,11 @@ Trois graphiques synchronisés : funding des deux marchés, clôtures des deux m
 
 ## Indicateurs historiques
 
-Les indicateurs se recalculent à chaque nouveau JSON, même si le graphique est zoomé sur une courte période :
+Les cartes et indicateurs se recalculent à chaque nouveau JSON et lors du choix **7 / 30 / 90 jours / tout l’historique**. Le sélecteur de période détermine leurs données ; le zoom manuel déplace seulement les graphiques. Le funding couvre les paiements horaires jusqu’au dernier paiement récupéré. Les cartes de prix gardent la dernière clôture et ajoutent la moyenne et la variation sur la période :
 
-- **Funding annualisé réalisé** = moyenne de tous les taux horaires disponibles × 8 760 × 100. Il décrit un rythme annuel calculé à partir de paiements passés ; il ne représente pas un paiement effectivement reçu sur une année entière. Les taux positifs correspondent au funding payé par un long et reçu par un short.
-- **Funding cumulé sur les 12 derniers mois** = somme des taux horaires réalisés sur les 365 jours précédant le dernier paiement. L’historique disponible étant initialement inférieur à un an, la couverture est explicitement indiquée comme partielle. Le cumul total et le nombre de jours observés sont affichés à côté.
-- **Corrélation des prix** = coefficient de Pearson × 100 sur les clôtures Brent/WTI aux timestamps communs de tout l’historique, en 4H ou daily selon la sélection. Les périodes avant le lancement du Brent sont exclues faute de prix Brent. −100 % représente une relation linéaire inverse parfaite, +100 % une relation positive parfaite. Il s’agit de la corrélation des niveaux de prix, pas de leurs rendements. La taille de l’échantillon et les dates communes sont affichées. Si les séries sont constantes ou trop courtes, la valeur reste indisponible.
+- **Funding annualisé réalisé** = moyenne des taux horaires de la période sélectionnée × 8 760 × 100. Il décrit un rythme annuel calculé à partir de paiements passés ; il ne représente pas un paiement effectivement reçu sur une année entière. Les taux positifs correspondent au funding payé par un long et reçu par un short.
+- **Funding cumulé sur les 12 derniers mois**, conservé dans « Data coverage & methodology », = somme des taux horaires réalisés sur les 365 jours précédant le dernier paiement. L’historique disponible étant initialement inférieur à un an, la couverture est explicitement indiquée comme partielle. Les cartes principales affichent le cumul et la durée de la période sélectionnée.
+- **Corrélation des prix** = coefficient de Pearson × 100 sur les clôtures Brent/WTI aux timestamps communs de la période sélectionnée, en 4H ou daily selon la sélection. Les périodes avant le lancement du Brent sont exclues faute de prix Brent. −100 % représente une relation linéaire inverse parfaite, +100 % une relation positive parfaite. Il s’agit de la corrélation des niveaux de prix, pas de leurs rendements. La taille de l’échantillon et les dates communes sont affichées. Si les séries sont constantes ou trop courtes, la valeur reste indisponible.
 
 ## Positions du compte
 
@@ -67,16 +69,16 @@ La lecture automatique est limitée à 100 sous-comptes, avec avertissement au-d
 
 ## Compiler et vérifier
 
-Installez Visual Studio 2022 Build Tools avec la charge **Développement Desktop en C++** puis exécutez **build.cmd**. Il détecte MSVC, compile un exécutable x64 C17 avec `/MT`, et exécute les tests C. Si Node.js est installé, les tests de calculs de l’interface sont aussi exécutés.
+Installez Visual Studio 2022 Build Tools avec la charge **Développement Desktop en C++** puis exécutez **tools/build.cmd**. Il détecte MSVC, compile un exécutable x64 C17 avec `/MT`, et exécute les tests C. Si Node.js est installé, les tests de calculs de l’interface sont aussi exécutés.
 
 ```powershell
-.\build.cmd
+.\tools\build.cmd
 Start-Process .\OilPerps.exe -ArgumentList '--sync' -Wait
 ```
 
 `--sync` effectue une collecte unique, écrit le JSON puis quitte (code 0 : succès, 1 : échec partiel, 2 : erreur locale, 3 : collecteur déjà actif). `--background` démarre le collecteur sans ouvrir d’onglet. Pour recopier le dossier, arrêter d’abord le collecteur afin d’emporter un JSON cohérent.
 
-Organisation : `src/` collecteur C et intégration Windows ; `web/` interface ; `vendor/` cJSON 1.7.19 sous licence MIT ; `tests/` tests de fusion, déduplication, trous, sauvegarde/lecture, agrégation et précision ; `.github/workflows/` compilation automatisée Windows.
+Organisation : `src/` collecteur C et intégration Windows ; `web/` interface ; `vendor/` cJSON 1.7.19 sous licence MIT ; `tests/` tests de fusion, déduplication, trous, sauvegarde/lecture, agrégation et précision ; `.github/workflows/` compilation automatisée Windows ; `tools/build.cmd` réservé au développement. Le compilateur de ressources Windows incorpore l’interface, les licences et le JSON initial dans le binaire. Le build vérifie la présence des ressources et la lecture du JSON intégré.
 
 ## Sources
 

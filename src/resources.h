@@ -1,0 +1,8 @@
+#define OIL_HTML 101
+#define OIL_APP_JS 102
+#define OIL_MATH_JS 103
+#define OIL_I18N_JS 104
+#define OIL_CSS 105
+#define OIL_SEED 106
+#define OIL_LICENSE 107
+#define OIL_CJSON_LICENSE 108

@@ -21,3 +21,13 @@ vm.createContext(langContext);vm.runInContext(fs.readFileSync(require.resolve('.
 assert.equal(langContext.testI18n.lang,'en');const expected={en:'Realized funding',fr:'Funding réalisé',zh:'实际资金费率',ko:'실현 펀딩',ja:'確定資金調達率',it:'Funding realizzato',es:'Funding realizado'};
 for(const [language,text] of Object.entries(expected)){langContext.testI18n.set(language);assert.equal(langContext.testI18n.translate('Funding réalisé'),text);}
 console.log('JS: English default and all seven language translations OK');
+const windowHours=Array.from({length:120*24},(_,i)=>({time:(i+1)*M.HOUR,fundingRate:i<100*24?.00001:-.00002}));
+const end=windowHours.at(-1).time,seven=M.selectWindow(windowHours,end-7*24*M.HOUR,end),thirty=M.selectWindow(windowHours,end-30*24*M.HOUR,end),ninety=M.selectWindow(windowHours,end-90*24*M.HOUR,end);
+assert.equal(seven.length,168);assert.equal(thirty.length,720);assert.equal(ninety.length,2160);assert.equal(M.selectWindow(windowHours,0,end).length,2880);
+assert.notEqual(M.fundingStats(seven).annualized,M.fundingStats(thirty).annualized);assert.notEqual(M.fundingStats(seven).total,M.fundingStats(ninety).total);
+const prices=Array.from({length:121},(_,i)=>({time:i*24*M.HOUR,value:100+i}));const ps=M.priceStats(prices,end-7*24*M.HOUR,end);
+assert.equal(ps.count,7);assert.equal(ps.average,217);assert.equal(ps.latest.value,220);assert.ok(Math.abs(ps.change-(220/213-1)*100)<1e-10);
+assert.equal(M.priceStats(prices,end+M.HOUR,end+2*M.HOUR).latest,null);
+const paired=prices.map((p,i)=>({...p,value:i<110?p.value:440-p.value}));
+assert.notEqual(M.correlation(M.selectWindow(prices,end-7*24*M.HOUR,end),M.selectWindow(paired,end-7*24*M.HOUR,end)).percent,M.correlation(prices,paired).percent);
+console.log('JS: 7/30/90/full period selection updates funding, annualization, price average/change and correlation; empty windows handled OK');

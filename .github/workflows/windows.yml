@@ -9,13 +9,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build and test C and UI calculations
         shell: cmd
-        run: build.cmd
+        run: tools\build.cmd
       - name: Package portable application
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force package | Out-Null
-          Copy-Item OilPerps.exe,Lancer.cmd,Installer-demarrage.cmd,Retirer-demarrage.cmd,install-startup.ps1,README.md,LICENSE -Destination package
-          Copy-Item web,data -Destination package -Recurse
+          Copy-Item OilPerps.exe -Destination package
       - uses: actions/upload-artifact@v4
         with:
           name: Oil-Perps-Hyperliquid-Windows-x64

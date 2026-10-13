@@ -3,10 +3,12 @@
 #include <winsock2.h>
 #include <windows.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "core.h"
+#include "resources.h"
 #define PORT 18764
 #define TRAY_MSG (WM_APP+1)
 #define APP_URL L"http://127.0.0.1:18764/"
@@ -20,6 +22,43 @@ static volatile LONG syncing=0,requested=0,last_ok=1;
 static char status_error[256]={0};
 static SOCKET listener=INVALID_SOCKET;
 static NOTIFYICONDATAW tray;
+static int save_data(void);
+static char *resource_text(int id,size_t *length) {
+    HMODULE module=GetModuleHandleW(NULL);HRSRC res=FindResourceW(module,MAKEINTRESOURCEW(id),RT_RCDATA);
+    HGLOBAL loaded;DWORD size;const char *bytes;char *text;
+    if(!res)return NULL;size=SizeofResource(module,res);loaded=LoadResource(module,res);if(!loaded)return NULL;
+    bytes=(const char*)LockResource(loaded);if(!bytes||!size)return NULL;
+    text=(char*)malloc((size_t)size+1);if(!text)return NULL;memcpy(text,bytes,size);text[size]=0;
+    if(length)*length=size;return text;
+}
+static int legacy_startup_path(wchar_t *path,size_t capacity) {
+    wchar_t folder[MAX_PATH];
+    if(FAILED(SHGetFolderPathW(NULL,CSIDL_STARTUP,NULL,SHGFP_TYPE_CURRENT,folder)))return 0;
+    return swprintf_s(path,capacity,L"%s\\Oil Perps Hyperliquid.lnk",folder)>0;
+}
+static int startup_enabled(void) {
+    HKEY key;DWORD size=0;LONG result;wchar_t legacy[MAX_PATH+64];
+    result=RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",0,KEY_QUERY_VALUE,&key);
+    if(result==ERROR_SUCCESS){result=RegQueryValueExW(key,L"Oil Perps Hyperliquid",NULL,NULL,NULL,&size);RegCloseKey(key);if(result==ERROR_SUCCESS&&size)return 1;}
+    return legacy_startup_path(legacy,sizeof(legacy)/sizeof(*legacy)) && GetFileAttributesW(legacy)!=INVALID_FILE_ATTRIBUTES;
+}
+static LONG startup_set(int enabled) {
+    HKEY key;LONG result;wchar_t executable[MAX_PATH],command[MAX_PATH+32],legacy[MAX_PATH+64];
+    if(enabled){
+        DWORD len=GetModuleFileNameW(NULL,executable,MAX_PATH);if(!len||len>=MAX_PATH)return ERROR_FILENAME_EXCED_RANGE;
+        if(swprintf_s(command,sizeof(command)/sizeof(*command),L"\"%s\" --background",executable)<=0 || wcslen(command)>=260)return ERROR_FILENAME_EXCED_RANGE;
+        result=RegCreateKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",0,NULL,0,KEY_SET_VALUE,NULL,&key,NULL);
+        if(result!=ERROR_SUCCESS)return result;
+        result=RegSetValueExW(key,L"Oil Perps Hyperliquid",0,REG_SZ,(const BYTE*)command,(DWORD)((wcslen(command)+1)*sizeof(wchar_t)));RegCloseKey(key);
+    }else{
+        result=RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",0,KEY_SET_VALUE,&key);
+        if(result==ERROR_SUCCESS){result=RegDeleteValueW(key,L"Oil Perps Hyperliquid");RegCloseKey(key);}
+        if(result==ERROR_FILE_NOT_FOUND)result=ERROR_SUCCESS;
+    }
+    if(result!=ERROR_SUCCESS)return result;
+    if(legacy_startup_path(legacy,sizeof(legacy)/sizeof(*legacy)) && GetFileAttributesW(legacy)!=INVALID_FILE_ATTRIBUTES && !DeleteFileW(legacy))return (LONG)GetLastError();
+    return ERROR_SUCCESS;
+}
 static char *read_file(const char *path,size_t *length) {
     FILE *f=fopen(path,"rb");long n;char *s;
     if(!f)return NULL;
@@ -37,7 +76,10 @@ static int load_data(void) {
         if(existed && !MoveFileExW(L"data/history.json",L"data/history.corrupt.json",MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)) return 0;
         return 1;
     }
-    free(s);return !existed && GetFileAttributesW(L"data/history.backup.json")==INVALID_FILE_ATTRIBUTES;
+    free(s);
+    if(existed || GetFileAttributesW(L"data/history.backup.json")!=INVALID_FILE_ATTRIBUTES)return 0;
+    s=resource_text(OIL_SEED,NULL);if(!s)return 0;
+    {int ok=database_load(&db,s);free(s);return ok && save_data();}
 }
 static int save_data(void) {
     cJSON *root=database_json(&db);char *s=cJSON_PrintUnformatted(root);HANDLE f;DWORD written;BOOL ok=FALSE;
@@ -120,6 +162,16 @@ static void handle_client(SOCKET s) {
         if(!strstr(req,"\r\nX-Oil-Client: 1\r\n") && !strstr(req,"\r\nx-oil-client: 1\r\n")){respond(s,403,"text/plain","Refuse",6);return;}
         InterlockedExchange(&requested,1);respond(s,202,"application/json","{\"queued\":true}",15);return;
     }
+    if(!strcmp(method,"POST") && !strcmp(path,"/api/startup")) {
+        LONG error;char status[128];int len,enabled;
+        if(!strstr(req,"\r\nX-Oil-Client: 1\r\n") && !strstr(req,"\r\nx-oil-client: 1\r\n")){respond(s,403,"text/plain","Refuse",6);return;}
+        if(strstr(req,"\r\nX-Oil-Startup: on\r\n") || strstr(req,"\r\nx-oil-startup: on\r\n"))enabled=1;
+        else if(strstr(req,"\r\nX-Oil-Startup: off\r\n") || strstr(req,"\r\nx-oil-startup: off\r\n"))enabled=0;
+        else {respond(s,400,"text/plain","Invalid setting",15);return;}
+        error=startup_set(enabled);if(error)oil_log("Startup setting error=STARTUP_WIN32_%ld",error);
+        len=snprintf(status,sizeof(status),"{\"enabled\":%s,\"errorCode\":%ld}",startup_enabled()?"true":"false",error);
+        respond(s,error?500:200,"application/json",status,(size_t)len);return;
+    }
     if(!strcmp(method,"POST") && !strcmp(path,"/api/account")) {
         char address[43]={0};const char *head;
         if(!strstr(req,"\r\nX-Oil-Client: 1\r\n") && !strstr(req,"\r\nx-oil-client: 1\r\n")){respond(s,403,"text/plain","Refuse",6);return;}
@@ -130,6 +182,7 @@ static void handle_client(SOCKET s) {
         respond(s,202,"application/json","{\"queued\":true}",15);return;
     }
     if(strcmp(method,"GET")){respond(s,405,"text/plain","GET requis",10);return;}
+    if(!strcmp(path,"/api/startup")){const char *status=startup_enabled()?"{\"enabled\":true}":"{\"enabled\":false}";respond(s,200,"application/json",status,strlen(status));return;}
     if(!strcmp(path,"/api/status")) {
         char status[512];int len;EnterCriticalSection(&file_lock);
         len=snprintf(status,sizeof(status),"{\"syncing\":%s,\"queued\":%s,\"lastOk\":%s,\"now\":%lld,\"errorCode\":\"%s\"}",syncing?"true":"false",requested?"true":"false",last_ok?"true":"false",(long long)now_ms(),status_error);
@@ -144,14 +197,18 @@ static void handle_client(SOCKET s) {
         else respond(s,200,"application/json", "{\"pending\":true}",16);return;
     }
     if(!strcmp(path,"/api/history")) {EnterCriticalSection(&file_lock);body=read_file("data/history.json",&length);LeaveCriticalSection(&file_lock);}
-    else if(!strcmp(path,"/") || !strcmp(path,"/index.html"))body=read_file("web/index.html",&length);
-    else if(!strcmp(path,"/app.js"))body=read_file("web/app.js",&length);
-    else if(!strcmp(path,"/math.js"))body=read_file("web/math.js",&length);
-    else if(!strcmp(path,"/i18n.js"))body=read_file("web/i18n.js",&length);
-    else if(!strcmp(path,"/style.css"))body=read_file("web/style.css",&length);
+    else if(!strcmp(path,"/") || !strcmp(path,"/index.html"))body=resource_text(OIL_HTML,&length);
+    else if(!strcmp(path,"/app.js"))body=resource_text(OIL_APP_JS,&length);
+    else if(!strcmp(path,"/math.js"))body=resource_text(OIL_MATH_JS,&length);
+    else if(!strcmp(path,"/i18n.js"))body=resource_text(OIL_I18N_JS,&length);
+    else if(!strcmp(path,"/style.css"))body=resource_text(OIL_CSS,&length);
+    else if(!strcmp(path,"/licenses")){
+        size_t aLen=0,bLen=0;char *a=resource_text(OIL_LICENSE,&aLen),*b=resource_text(OIL_CJSON_LICENSE,&bLen);
+        if(a&&b){length=aLen+bLen+9;body=(char*)malloc(length+1);if(body){memcpy(body,a,aLen);memcpy(body+aLen,"\n\ncJSON\n\n",9);memcpy(body+aLen+9,b,bLen);body[length]=0;}}free(a);free(b);
+    }
     else if(!strcmp(path,"/favicon.ico")){respond(s,200,"image/x-icon","",0);return;}
     if(body) {
-        const char *type=!strcmp(path,"/api/history")?"application/json; charset=utf-8":strstr(path,".js")?"application/javascript; charset=utf-8":strstr(path,".css")?"text/css; charset=utf-8":"text/html; charset=utf-8";
+        const char *type=!strcmp(path,"/licenses")?"text/plain; charset=utf-8":!strcmp(path,"/api/history")?"application/json; charset=utf-8":strstr(path,".js")?"application/javascript; charset=utf-8":strstr(path,".css")?"text/css; charset=utf-8":"text/html; charset=utf-8";
         respond(s,200,type,body,length);free(body);
     } else respond(s,404,"text/plain","Indisponible",12);
 }
@@ -179,6 +236,13 @@ static int run(int argc,wchar_t **argv) {
     wchar_t directory[32768];HANDLE mutex,worker=NULL,server=NULL,accountWorker=NULL;HWND window;WNDCLASSW wc={0};MSG msg;WSADATA wsa;
     struct sockaddr_in addr={0};int once=0,background=0,i,result=0;
     for(i=1;i<argc;i++){if(!wcscmp(argv[i],L"--sync"))once=1;else if(!wcscmp(argv[i],L"--background"))background=1;
+        else if(!wcscmp(argv[i],L"--verify-bundle")){
+            Database check={0};char *seed;int id,ok;
+            for(id=OIL_HTML;id<=OIL_CJSON_LICENSE;id++){char *asset=resource_text(id,NULL);if(!asset)return 4;free(asset);}
+            seed=resource_text(OIL_SEED,NULL);ok=seed&&database_load(&check,seed);free(seed);database_free(&check);return ok?0:4;
+        }
+        else if(!wcscmp(argv[i],L"--install-startup"))return (int)startup_set(1);
+        else if(!wcscmp(argv[i],L"--remove-startup"))return (int)startup_set(0);
         else if(!wcscmp(argv[i],L"--stop")){HWND old=FindWindowW(L"OilPerpsCollector",NULL);if(old)PostMessageW(old,WM_APP+2,0,0);return 0;}}
     GetModuleFileNameW(NULL,directory,32768);{wchar_t *end=wcsrchr(directory,L'\\');if(end)*end=0;}SetCurrentDirectoryW(directory);
     mutex=CreateMutexW(NULL,FALSE,L"Local\\OilPerpsHyperliquidCollectorV1");
