@@ -22,6 +22,10 @@ int main(int argc,char **argv) {
         json=tlt_sec_json(&yield);tlt_sec_load(&loaded,json);cJSON_Delete(json);assert(loaded.percent==5.54 && !strcmp(loaded.error,yield.error) && !strcmp(loaded.etag,"\"v1\""));
         assert(tlt_sec_apply(&loaded,304,NULL,time+4*HOUR_MS,NULL,NULL));assert(!loaded.error[0]);
         {SecYield missing={0};assert(!tlt_sec_apply(&missing,304,NULL,time,NULL,NULL));assert(!missing.available);}
+        {SecYield schedule={0};assert(tlt_sec_due(&schedule,time,0));schedule.attempted=5*HOUR_MS+61500;
+        assert(!tlt_sec_due(&schedule,5*HOUR_MS+300000,0));assert(tlt_sec_due(&schedule,6*HOUR_MS+60000,0));
+        assert(tlt_sec_due(&schedule,5*HOUR_MS+62000,1));assert(tlt_sec_due(&schedule,4*HOUR_MS,0));
+        strcpy_s(schedule.error,sizeof(schedule.error),"TLT_SEC_HTTP_503");assert(!tlt_sec_due(&schedule,schedule.attempted+299999,0));assert(tlt_sec_due(&schedule,schedule.attempted+300000,0));}
         {char *where=strstr(fixture,"Oct 09, 2026");assert(where);memcpy(where,"Feb 30, 2026",12);where=strstr(where+12,"Oct 09, 2026");assert(where);memcpy(where,"Feb 30, 2026",12);assert(!tlt_sec_parse(fixture,&percent,asOf));}
         db.tltSecYield=loaded;
         puts("C: exact SEC metric/date parsing, decoy rejection, 304 cache, error retention/recovery and invalid dates OK");

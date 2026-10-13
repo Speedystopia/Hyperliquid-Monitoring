@@ -12,6 +12,7 @@ typedef struct {
 int tlt_sec_parse(const char *html,double *percent,char asOf[11]);
 int tlt_sec_apply(SecYield *yield,int status,const char *html,int64_t time,const char *etag,const char *modified);
 int tlt_sec_sync(SecYield *yield,int force);
+int tlt_sec_due(const SecYield *yield,int64_t time,int force);
 cJSON *tlt_sec_json(const SecYield *yield);
 void tlt_sec_load(SecYield *yield,const cJSON *json);
 #endif

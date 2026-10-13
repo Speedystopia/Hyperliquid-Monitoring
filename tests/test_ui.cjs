@@ -77,3 +77,11 @@ inverseCells[0][1]={percent:70,count:5};inverseCells[2][3]={percent:-90,count:2}
 const priceA=.01,priceB=-.01,notional=1000;assert.equal(notional*priceA-notional*priceB,20);assert.equal(notional*priceA+notional*priceB,0);
 for(const language of ['en','fr','zh','ko','ja','it','es']){langContext.testI18n.set(language);for(const label of ['Mouvements opposés · fundings de même signe','Short A · Short B · montants égaux','Long A · Long B · montants égaux'])assert.ok(language==='fr'||langContext.testI18n.translate(label)!==label);}
 console.log('JS: inverse-correlation ranking selects same funding signs, sums received rates, shows two longs/shorts, excludes invalid pairs and translates all labels OK');
+const thresholdPairs=[{percent:66,count:5},{percent:66.001,count:5},{percent:-66,count:5},{percent:-66.001,count:5},{percent:95,count:5},{percent:NaN,count:5},{percent:99,count:2}];
+assert.deepEqual(M.selectCorrelationPairs(thresholdPairs).pairs.map(p=>p.percent),[95,66.001,-66.001]);assert.equal(M.selectCorrelationPairs(thresholdPairs).fallback,false);
+assert.deepEqual(M.selectCorrelationPairs([{percent:-62.9,count:208},{percent:-59.9,count:208}]),{pairs:[{percent:-62.9,count:208}],fallback:true});
+assert.deepEqual(M.selectCorrelationPairs([{percent:66,count:5}]),{pairs:[{percent:66,count:5}],fallback:true});
+assert.deepEqual(M.selectCorrelationPairs([]),{pairs:[],fallback:false});assert.equal(M.selectCorrelationPairs([{percent:0,count:5},{percent:null,count:5}]).pairs.length,0);
+assert.equal(M.selectCorrelationPairs(Array.from({length:8},(_,i)=>({percent:80+i,count:5}))).pairs.length,6);assert.equal(thresholdPairs[0].percent,66);
+for(const language of ['en','fr','zh','ko','ja','it','es']){langContext.testI18n.set(language);for(const label of ['Seuil strict : corrélation < −66 %.','Seuil strict : corrélation > +66 %.'])assert.ok(language==='fr'||langContext.testI18n.translate(label)!==label);}
+console.log('JS: strict absolute correlation >66 threshold, exact boundaries, best-only fallback, invalid/empty inputs and ranking cap OK');

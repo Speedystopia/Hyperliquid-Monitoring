@@ -100,10 +100,13 @@ static void response_header(HINTERNET request,DWORD key,char *out,size_t capacit
         if(!length || strpbrk(out,"\r\n"))out[0]=0;
     }
 }
+int tlt_sec_due(const SecYield *yield,int64_t time,int force){
+    return force || !yield->attempted || time<yield->attempted || time/HOUR_MS!=yield->attempted/HOUR_MS || (yield->error[0] && time-yield->attempted>=300000);
+}
 int tlt_sec_sync(SecYield *yield,int force){
     HINTERNET session=NULL,connection=NULL,request=NULL;DWORD status=0,size=sizeof(status),decompress=WINHTTP_DECOMPRESSION_FLAG_GZIP|WINHTTP_DECOMPRESSION_FLAG_DEFLATE,winerror=0;
     char *body=NULL,etag[256]={0},modified[80]={0};size_t length=0;int valid=1,ok=0;int64_t time=now_ms();
-    if(!force && yield->attempted && time>=yield->attempted && time-yield->attempted<(yield->error[0]?300000:HOUR_MS))return !yield->error[0];
+    if(!tlt_sec_due(yield,time,force))return !yield->error[0];
     yield->attempted=time;if(oil_stop)return yield_failure(yield,"TLT_SEC_STOPPED");
     session=WinHttpOpen(L"HyperliquidMonitoring/2.3",WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);
     if(session){WinHttpSetTimeouts(session,5000,5000,10000,15000);connection=WinHttpConnect(session,L"www.ishares.com",443,0);}

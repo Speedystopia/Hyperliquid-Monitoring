@@ -82,6 +82,11 @@
   }
   return pairs.sort((a,b)=>a.percent-b.percent);
  }
- const api={HOUR,SCALE,decimal,fixed,weighted,received,aggregateFunding,positionSummary,fundingStats,correlation,selectWindow,priceStats,indexAfter,priceReturns,correlationMatrix,fundingCarry,oppositeFundingPairs,inverseFundingPairs,fundingNetBand};
+ function selectCorrelationPairs(list){
+  const sorted=list.filter(c=>Number.isFinite(c.percent)&&c.percent!==0&&c.count>=3).slice().sort((a,b)=>Math.abs(b.percent)-Math.abs(a.percent));
+  const strong=sorted.filter(c=>Math.abs(c.percent)>66);
+  return {pairs:(strong.length?strong:sorted).slice(0,strong.length?6:1),fallback:!strong.length&&sorted.length>0};
+ }
+ const api={HOUR,SCALE,decimal,fixed,weighted,received,aggregateFunding,positionSummary,fundingStats,correlation,selectWindow,priceStats,indexAfter,priceReturns,correlationMatrix,fundingCarry,oppositeFundingPairs,inverseFundingPairs,selectCorrelationPairs,fundingNetBand};
  if(typeof module!=='undefined')module.exports=api;else root.OilMath=api;
 })(globalThis);
