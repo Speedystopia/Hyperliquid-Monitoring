@@ -62,6 +62,60 @@ done:
     SecureZeroMemory(user,sizeof(user));SecureZeroMemory(secret,sizeof(secret));
     if(http)WinHttpCloseHandle(http);if(connection)WinHttpCloseHandle(connection);if(session)WinHttpCloseHandle(session);return r;
 }
+cJSON *sources_fees_parse(const cJSON *response,int64_t time,int account){
+    cJSON *fees=cJSON_CreateObject();double taker=value(response,"userCrossRate"),maker=value(response,"userAddRate"),referral=value(response,"activeReferralDiscount");
+    num(fees,"time",(double)time);text(fees,"source","Hyperliquid userFees");text(fees,"feeScheduleBasis",account?"Account-specific current rates":"Public base tier; zero-address userFees, no user discounts");put(fees,"accountSpecific",cJSON_CreateBool(account));
+    if(isfinite(taker)&&taker>=0&&taker<=0.01&&isfinite(maker)&&maker>=-0.01&&maker<=0.01&&isfinite(referral)&&referral>=0&&referral<=1){
+        num(fees,"baseTakerRate",taker);num(fees,"baseMakerRate",maker);num(fees,"activeReferralDiscount",referral);text(fees,"errorCode","");
+    }else{put(fees,"baseTakerRate",cJSON_CreateNull());put(fees,"baseMakerRate",cJSON_CreateNull());put(fees,"activeReferralDiscount",cJSON_CreateNull());text(fees,"errorCode","HL_USER_FEES_INVALID_RESPONSE");}
+    return fees;
+}
+cJSON *sources_market_fees(const cJSON *quote,const cJSON *base_fees){
+    cJSON *out=cJSON_CreateObject();double taker=value(base_fees,"baseTakerRate"),maker=value(base_fees,"baseMakerRate"),referral=value(base_fees,"activeReferralDiscount"),scale=value(quote,"deployerFeeScale"),share,hip,growth;
+    const cJSON *mode=cJSON_GetObjectItemCaseSensitive(quote,"growthMode"),*aligned=cJSON_GetObjectItemCaseSensitive(quote,"alignedFeeDiscount");
+    static const char *keys[]={"deployerFeeScale","growthMode","collateralToken","alignedFeeDiscount","isHip3"};int i;
+    num(out,"time",value(base_fees,"time"));num(out,"metadataTime",value(quote,"time"));text(out,"source","Hyperliquid userFees + metaAndAssetCtxs; official perp fee formula");text(out,"formulaSource","https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees");
+    for(i=0;i<(int)(sizeof(keys)/sizeof(keys[0]));i++){const cJSON *field=cJSON_GetObjectItemCaseSensitive(quote,keys[i]);put(out,keys[i],field?cJSON_Duplicate(field,1):cJSON_CreateNull());}
+    num(out,"baseTakerRate",taker);num(out,"baseMakerRate",maker);num(out,"activeReferralDiscount",referral);
+    if(!isfinite(taker)||taker<0||taker>0.01||!isfinite(maker)||maker<-.01||maker>.01||!isfinite(referral)||referral<0||referral>1||!isfinite(scale)||scale<0||scale>10||!cJSON_IsBool(mode)||!cJSON_IsBool(aligned)){
+        put(out,"takerFeeBps",cJSON_CreateNull());put(out,"makerFeeBps",cJSON_CreateNull());text(out,"errorCode","HL_FEE_PARAMETERS_UNAVAILABLE");return out;
+    }
+    hip=scale<1?1+scale:2*scale;share=scale<1?scale/(1+scale):0.5;growth=cJSON_IsTrue(mode)?0.1:1;
+    taker*=hip*growth*(1-referral);if(cJSON_IsTrue(aligned))taker*=(1-share)*0.8+share;
+    maker*=growth;if(maker>0)maker*=hip*(1-referral);else if(cJSON_IsTrue(aligned))maker*=(1-share)*1.5+share;
+    num(out,"takerFeeBps",taker*10000);num(out,"makerFeeBps",maker*10000);text(out,"errorCode","");return out;
+}
+int sources_book_apply(cJSON *books,const cJSON *response,int market,int64_t collected_at){
+    const cJSON *coin=cJSON_GetObjectItemCaseSensitive(response,"coin"),*levels=cJSON_GetObjectItemCaseSensitive(response,"levels");cJSON *book,*sides[2];double timestamp=value(response,"time"),top[2]={0,0};int side;
+    if(market<0||market>=OIL_MARKET_COUNT||!cJSON_IsString(coin)||strcmp(coin->valuestring,OIL_COINS[market])||!isfinite(timestamp)||timestamp<=0||timestamp>collected_at+60000||floor(timestamp)!=timestamp||!cJSON_IsArray(levels)||cJSON_GetArraySize(levels)!=2)return 0;
+    book=cJSON_CreateObject();sides[0]=cJSON_CreateArray();sides[1]=cJSON_CreateArray();put(book,"bids",sides[0]);put(book,"asks",sides[1]);
+    for(side=0;side<2;side++){const cJSON *rows=cJSON_GetArrayItem(levels,side),*row;double previous=0;int count=0;
+        if(!cJSON_IsArray(rows)||cJSON_GetArraySize(rows)<1||cJSON_GetArraySize(rows)>20){cJSON_Delete(book);return 0;}
+        cJSON_ArrayForEach(row,rows){double price=value(row,"px"),size=value(row,"sz");cJSON *level;
+            if(!isfinite(price)||price<=0||!isfinite(size)||size<=0||(count&&(side==0?price>previous:price<previous))){cJSON_Delete(book);return 0;}
+            if(!count)top[side]=price;previous=price;count++;level=cJSON_CreateObject();num(level,"px",price);num(level,"sz",size);cJSON_AddItemToArray(sides[side],level);
+        }
+    }
+    if(top[0]>=top[1]){cJSON_Delete(book);return 0;}
+    num(book,"time",timestamp);num(book,"collectedAt",(double)collected_at);text(book,"coin",OIL_COINS[market]);text(book,"source","Hyperliquid l2Book, full price precision, max 20 levels per side");
+    num(book,"bid",top[0]);num(book,"ask",top[1]);num(book,"mid",(top[0]+top[1])/2);num(book,"spreadBps",(top[1]-top[0])/((top[1]+top[0])/2)*10000);text(book,"errorCode","");put(book,"available",cJSON_CreateBool(1));put(books,OIL_NAMES[market],book);return 1;
+}
+static cJSON *fees_request(const char *address,int account){
+    char body[192],code[80];Reply reply;cJSON *response,*fees;int64_t time=now_ms();
+    if(!address_valid(address)){fees=sources_fees_parse(NULL,time,account);text(fees,"errorCode","HL_USER_FEES_INVALID_ADDRESS");return fees;}
+    snprintf(body,sizeof(body),"{\"type\":\"userFees\",\"user\":\"%s\"}",address);reply=request(L"api.hyperliquid.xyz",L"/info",body,NULL,NULL,NULL,1024*1024);response=reply.bytes?cJSON_Parse(reply.bytes):NULL;fees=sources_fees_parse(response,time,account);
+    if(reply.status!=200){snprintf(code,sizeof(code),"HL_USER_FEES_%s_%lu",reply.status?"HTTP":"WINHTTP",(unsigned long)(reply.status?reply.status:reply.error));text(fees,"errorCode",code);num(fees,"httpStatus",reply.status);}
+    cJSON_Delete(response);free(reply.bytes);return fees;
+}
+cJSON *sources_account_fees(const char *address){
+    cJSON *fees=fees_request(address,1),*quotes=cJSON_CreateObject(),*markets=cJSON_CreateObject();int xyz,i;
+    put(fees,"markets",markets);if(!cJSON_IsNumber(cJSON_GetObjectItemCaseSensitive(fees,"baseTakerRate"))){cJSON_Delete(quotes);return fees;}
+    for(xyz=0;xyz<2&&!oil_stop;xyz++){
+        Reply reply=request(L"api.hyperliquid.xyz",L"/info",xyz?"{\"type\":\"metaAndAssetCtxs\",\"dex\":\"xyz\"}":"{\"type\":\"metaAndAssetCtxs\"}",NULL,NULL,NULL,4*1024*1024);cJSON *response=reply.bytes?cJSON_Parse(reply.bytes):NULL;
+        if(reply.status!=200||!sources_context_apply(quotes,response,now_ms(),xyz))text(fees,"errorCode","HL_ACCOUNT_FEE_METADATA_UNAVAILABLE");cJSON_Delete(response);free(reply.bytes);
+    }
+    for(i=0;i<OIL_MARKET_COUNT;i++)put(markets,OIL_NAMES[i],sources_market_fees(cJSON_GetObjectItemCaseSensitive(quotes,OIL_NAMES[i]),fees));cJSON_Delete(quotes);return fees;
+}
 int sources_context_apply(cJSON *markets,const cJSON *response,int64_t time,int xyz){
     static const char *fields[]={"oraclePx","markPx","midPx","funding","premium","openInterest","dayNtlVlm","prevDayPx"};
     const cJSON *meta=cJSON_GetArrayItem(response,0),*universe=cJSON_GetObjectItemCaseSensitive(meta,"universe"),*contexts=cJSON_GetArrayItem(response,1);int i,j,n,found=0;
@@ -73,6 +127,19 @@ int sources_context_apply(cJSON *markets,const cJSON *response,int64_t time,int 
             if(!cJSON_IsString(name)||strcmp(name->valuestring,OIL_COINS[i]))continue;
             context=cJSON_GetArrayItem(contexts,n);if(!cJSON_IsObject(context))return 0;
             quote=cJSON_CreateObject();missing=cJSON_CreateArray();num(quote,"time",(double)time);text(quote,"apiCoin",OIL_COINS[i]);text(quote,"source","Hyperliquid metaAndAssetCtxs");
+            {const cJSON *asset=cJSON_GetArrayItem(universe,n),*growth=cJSON_GetObjectItemCaseSensitive(asset,"growthMode");double scale=xyz?value(asset,"deployerFeeScale"):0,collateral=value(meta,"collateralToken"),size_decimals=value(asset,"szDecimals"),leverage=value(asset,"maxLeverage");
+            put(quote,"isHip3",cJSON_CreateBool(xyz));num(quote,"szDecimals",size_decimals);num(quote,"maxLeverage",leverage);num(quote,"collateralToken",collateral);
+            if(isfinite(scale)&&scale>=0&&scale<=10)num(quote,"deployerFeeScale",scale);else put(quote,"deployerFeeScale",cJSON_CreateNull());
+            if(!xyz)put(quote,"growthMode",cJSON_CreateBool(0));
+            else if(cJSON_IsString(growth)&&(!strcmp(growth->valuestring,"enabled")||!strcmp(growth->valuestring,"disabled")))put(quote,"growthMode",cJSON_CreateBool(!strcmp(growth->valuestring,"enabled")));
+            else if(!growth){put(quote,"growthMode",cJSON_CreateBool(0));text(quote,"growthModeSource","meta field absent: growth reduction not active; GOLD and crypto-treasury wrappers are ineligible under the current official fee rules");}
+            else put(quote,"growthMode",cJSON_CreateNull());
+            {const cJSON *changed=cJSON_GetObjectItemCaseSensitive(asset,"lastFeeScaleChangeTime");if(cJSON_IsString(changed))text(quote,"lastFeeScaleChangeTime",changed->valuestring);}
+            /* USDC collateral 0 uses AQAv2. The official current AQAv2 spec
+               explicitly provides no fee discount; do not confuse with AQAv1. */
+            if(collateral==0){text(quote,"collateralName","USDC");put(quote,"alignedFeeDiscount",cJSON_CreateBool(0));text(quote,"alignmentRule","USDC AQAv2: no trading-fee benefit");}
+            else{put(quote,"collateralName",cJSON_CreateNull());put(quote,"alignedFeeDiscount",cJSON_CreateNull());text(quote,"alignmentRule","Collateral alignment fee eligibility not verified");}
+            text(quote,"alignmentSource","https://hyperliquid.gitbook.io/hyperliquid-docs/hypercore/aligned-quote-assets");}
             text(quote,"referenceType",xyz?"deployer_oracle_reference":"external_spot_oracle_reference");
             for(j=0;j<(int)(sizeof(fields)/sizeof(fields[0]));j++){double d=value(context,fields[j]);int price=j<=2||j==7;
                 if(isfinite(d) && (!price||d>0) && ((j!=5 && j!=6)||d>=0))num(quote,fields[j],d);
@@ -81,6 +148,24 @@ int sources_context_apply(cJSON *markets,const cJSON *response,int64_t time,int 
         }
     }
     return found==(xyz?13:2);
+}
+static void execution_sync(cJSON *state,cJSON *quotes,int64_t time){
+    cJSON *execution=fees_request("0x0000000000000000000000000000000000000000",0),*markets=cJSON_CreateObject(),*books=object(state,"depthBooks");int i;
+    put(execution,"markets",markets);num(execution,"lastAttempt",(double)time);
+    if(cJSON_IsNumber(cJSON_GetObjectItemCaseSensitive(execution,"baseTakerRate")))num(execution,"lastSuccessfulCheck",(double)time);
+    for(i=0;i<OIL_MARKET_COUNT&&!oil_stop;i++){
+        char body[192],code[80];Reply reply;cJSON *response,*book;
+        put(markets,OIL_NAMES[i],sources_market_fees(cJSON_GetObjectItemCaseSensitive(quotes,OIL_NAMES[i]),execution));
+        snprintf(body,sizeof(body),"{\"type\":\"l2Book\",\"coin\":\"%s\"}",OIL_COINS[i]);reply=request(L"api.hyperliquid.xyz",L"/info",body,NULL,NULL,NULL,256*1024);response=reply.bytes?cJSON_Parse(reply.bytes):NULL;
+        if(reply.status!=200||!sources_book_apply(books,response,i,now_ms())){
+            book=object(books,OIL_NAMES[i]);put(book,"available",cJSON_CreateBool(0));num(book,"lastAttempt",(double)time);
+            snprintf(code,sizeof(code),"HL_L2_BOOK_%s_%lu",reply.status==200?"INVALID_OR_EMPTY":reply.status?"HTTP":"WINHTTP",(unsigned long)(reply.status?reply.status:reply.error));text(book,"errorCode",code);num(book,"httpStatus",reply.status);
+            oil_log("Market book error=%s market=%s",code,OIL_NAMES[i]);
+        }
+        cJSON_Delete(response);free(reply.bytes);
+    }
+    text(execution,"historicalCostNotice","Current fees and L2 depth are observed Hyperliquid values. Applying them to older candles is a current-cost scenario, not reconstructed historical executions. Maker fills are not guaranteed; extra frontend builder fees are not included.");
+    put(state,"execution",execution);
 }
 static void quotes_sync(Database *db,int force){
     cJSON *state,*markets,*snapshot,*snapshots;int64_t time=now_ms();int xyz,ok=1;
@@ -96,9 +181,11 @@ static void quotes_sync(Database *db,int force){
             snprintf(code,sizeof(code),"HL_CONTEXT_%s_%lu",reply.status==200?"INVALID":reply.status?"HTTP":"WINHTTP",(unsigned long)(reply.status?reply.status:reply.error));error(state,code,reply.status,reply.error);ok=0;}
         cJSON_Delete(response);free(reply.bytes);
     }
+    if(!oil_stop)execution_sync(state,markets,time);
     if(ok && !oil_stop){num(state,"lastSuccessfulCheck",(double)time);text(state,"errorCode","");num(state,"httpStatus",200);}
     snapshots=array(state,"snapshots");snapshot=cJSON_CreateObject();num(snapshot,"time",(double)time);text(snapshot,"errorCode",cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(state,"errorCode"))?cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(state,"errorCode")):"");
     put(snapshot,"markets",cJSON_Duplicate(markets,1));
+    put(snapshot,"execution",cJSON_Duplicate(cJSON_GetObjectItemCaseSensitive(state,"execution"),1));put(snapshot,"depthBooks",cJSON_Duplicate(cJSON_GetObjectItemCaseSensitive(state,"depthBooks"),1));
     {SYSTEMTIME date;char path[64],*line=cJSON_PrintUnformatted(snapshot);FILE *file;int stored=0;GetSystemTime(&date);snprintf(path,sizeof(path),"data/references-%04u.jsonl",date.wYear);CreateDirectoryW(L"data",NULL);
     file=line?fopen(path,"ab"):NULL;if(file){size_t length=strlen(line);stored=fwrite(line,1,length,file)==length && fputc('\n',file)!=EOF;if(fclose(file))stored=0;}
     if(stored){double count=value(state,"archiveCount");num(state,"archiveCount",isfinite(count)?count+1:1);text(state,"archivePath",path);}else error(state,"HL_CONTEXT_ARCHIVE_STORE",0,GetLastError());free(line);}
@@ -130,16 +217,12 @@ static void cme_sync(Database *db,int force){
     const char *id=getenv("CME_API_ID"),*password=getenv("CME_API_PASSWORD"),*token=getenv("CME_BEARER_TOKEN"),*configured=getenv("CME_DATASET_CODES");
     cJSON *state,*files,*events;int64_t time=now_ms();int credentials=sources_auth_kind(token,id,password)!=0;char *datasets=NULL,*cursor,*context=NULL;int completed=1,downloads=0;
     if(!db->externalData)db->externalData=cJSON_CreateObject();state=object(db->externalData,"cme");
+    if(!credentials){put(state,"enabled",cJSON_CreateBool(0));put(state,"connected",cJSON_CreateBool(0));text(state,"errorCode","CME_DISABLED_NO_CREDENTIALS");num(state,"httpStatus",0);text(state,"source",CME_SOURCE);text(state,"documentation","https://www.cmegroup.com/datamine/datamine-api.html");text(state,"analysisStatus","Optional authenticated connector disabled; no CME requests, account creation or purchase. Public reference data uses ECB, Binance and EIA separately.");return;}
+    put(state,"enabled",cJSON_CreateBool(1));
     if(!due(state,time,force))return;sources_cme_attempt(state,time);text(state,"source",CME_SOURCE);text(state,"documentation","https://www.cmegroup.com/datamine/datamine-api.html");
     text(state,"connectionMeaning","connected means authenticated DataMine list access verified in this cycle; it does not mean prices have been normalized or are available for correlation.");
     mappings(state);files=array(state,"files");events=array(state,"attempts");put(state,"backfillPending",cJSON_CreateBool(0));
     text(state,"websiteStatus","Automated public website access denied by CME; no scraping or bypass. DataMine requires an entitled API ID even for free daily settlement files.");
-    if(!credentials){
-        /* A single unauthenticated official API probe confirms status on startup;
-           later hourly checks use its explicit auth-required state, avoiding spam. */
-        DWORD status=401,winerror=0;if(!cJSON_GetObjectItemCaseSensitive(state,"probeTime")||force){Reply probe=request(CME_HOST,CME_LIST,NULL,NULL,NULL,NULL,1024*1024);status=probe.status;winerror=probe.error;free(probe.bytes);num(state,"probeTime",(double)time);}
-        put(state,"connected",cJSON_CreateBool(0));error(state,"CME_AUTH_REQUIRED",status,winerror);completed=0;goto done;
-    }
     if(!configured||!*configured){error(state,"CME_DATASET_CONFIG_REQUIRED",0,0);completed=0;goto done;}
     datasets=_strdup(configured);if(!datasets){error(state,"CME_OUT_OF_MEMORY",0,ERROR_OUTOFMEMORY);completed=0;goto done;}
     CreateDirectoryW(L"data",NULL);CreateDirectoryW(L"data/cme",NULL);

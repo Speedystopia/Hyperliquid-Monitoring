@@ -50,7 +50,7 @@ async function testPoller(){
 async function testInterface(){
  const fs=require('node:fs'),vm=require('node:vm'),math=require('../web/math.js');
  const timers=new Map(),rafs=new Map(),elements=new Map(),documentEvents={},windowEvents={},resizeCallbacks=[];
- const requests={},calculations={},writes={};let timerId=0,rafId=0,canvasResizes=0,revision=1,hours=120,fundingNegative=true,fundingMultiplier=1,tltFundingRate=.0001,secPercent=87.6,secError='',weakCorrelations=false,accountReady=false,accountVersion=0;
+ const requests={},calculations={},writes={};let timerId=0,rafId=0,canvasResizes=0,revision=1,publicRevision=1,hours=120,fundingNegative=true,fundingMultiplier=1,tltFundingRate=.0001,secPercent=87.6,secError='',weakCorrelations=false,accountReady=false,accountVersion=0;
  const context2d=new Proxy({measureText:text=>({width:text.length*6})},{get:(target,key)=>target[key]||(()=>{})});
  function element(id){if(elements.has(id))return elements.get(id);let html='',width=0,height=0;
   const el={id,value:'',checked:false,disabled:false,style:{},dataset:{},events:{},parentElement:{},textContent:'',offsetWidth:180,offsetHeight:100,className:'',hidden:false,classList:{toggle(){},contains(){return false;}},
@@ -69,7 +69,8 @@ async function testInterface(){
   }return data;
  }
  const fakeFetch=async(path,options={})=>{requests[path]=(requests[path]||0)+1;
-  if(path==='/api/status')return response(200,{syncing:false,queued:false,lastOk:true,errorCode:'',historyVersion:'v'+revision,lastSuccessfulSync:hours*math.HOUR,accountVersion,accountReady,accountBusy:false});
+  if(path==='/api/status')return response(200,{syncing:false,queued:false,lastOk:true,errorCode:'',historyVersion:'v'+revision,publicPricesVersion:'public'+publicRevision,lastSuccessfulSync:hours*math.HOUR,accountVersion,accountReady,accountBusy:false});
+  if(path==='/api/public-prices'){const base=fixture();return options.headers?.['If-None-Match']==='"public'+publicRevision+'"'?response(304,null,'"public'+publicRevision+'"'):response(200,{schemaVersion:1,markets:{BTC:{provider:'Binance',close1d:base.markets.BTC.close1d},ETH:{provider:'Binance',close1d:base.markets.ETH.close1d}}},'"public'+publicRevision+'"');}
   if(path==='/api/history')return options.headers?.['If-None-Match']==='"v'+revision+'"'?response(304,null,'"v'+revision+'"'):response(200,fixture(),'"v'+revision+'"');
   if(path==='/api/startup')return response(200,{enabled:true});
   if(path==='/api/account'&&options.method==='POST'){accountReady=options.headers['X-Oil-Address']!=='clear';accountVersion++;return response(202,{queued:true});}
@@ -118,10 +119,16 @@ async function testInterface(){
  element('correlation-mode').value='returns';element('correlation-mode').onchange();assert.ok(element('inverse-funding-pairs').innerHTML.includes('Short A · Short B · montants égaux'));assert.ok(element('inverse-funding-pairs').innerHTML.includes('negative'));assert.ok(element('inverse-funding-pairs').innerHTML.includes('rendement SEC à 30 jours'));
  const inverseBefore=element('inverse-funding-pairs').innerHTML;tltFundingRate=.00002;revision++;await tick();assert.notEqual(element('inverse-funding-pairs').innerHTML,inverseBefore);transfers=requests['/api/history'];
  weakCorrelations=true;revision++;await tick();assert.equal(dataRows(element('inverse-funding-pairs').innerHTML),1);assert.ok(element('inverse-funding-pairs').innerHTML.includes('Dangereux'));assert.equal((element('inverse-pairs').innerHTML.match(/class="inverse-row/g)||[]).length,1);transfers=requests['/api/history'];
+ assert.equal(requests['/api/public-prices'],undefined);element('matrix-source').value='public';element('matrix-source').onchange();await settle();draw();assert.equal(requests['/api/public-prices'],1);assert.ok(element('matrix-source-note').textContent.includes('pas des perps Hyperliquid'));assert.ok(element('matrix-coverage').innerHTML.includes('Binance'));assert.ok(element('matrix-coverage').innerHTML.includes('Indisponible'));assert.ok(element('funding-pairs').innerHTML.includes('Aucune paire')); // Missing external assets never silently reuse Hyperliquid prices.
+ const publicIdleCalculations={...calculations};for(let i=0;i<10;i++)await tick();assert.equal(requests['/api/public-prices'],1);assert.deepEqual(calculations,publicIdleCalculations);assert.equal(requests['/api/history'],transfers);
+ publicRevision++;await tick();assert.equal(requests['/api/public-prices'],2);assert.equal(requests['/api/history'],transfers);
+ document.hidden=true;documentEvents.visibilitychange();const publicHiddenRequests={...requests};await settle();assert.deepEqual(requests,publicHiddenRequests);document.hidden=false;documentEvents.visibilitychange();await settle();draw();assert.equal(requests['/api/public-prices'],2);
+ element('matrix-source').value='hyperliquid';element('matrix-source').onchange();await settle();draw();assert.ok(!element('matrix-coverage').innerHTML.includes('Binance'));
  context.window.location.hash='#home';windowEvents.hashchange();draw();assert.equal(element('home-view').hidden,false);assert.equal(element('monitor-content').hidden,true);assert.equal((element('market-cards').innerHTML.match(/class=\"market-card/g)||[]).length,2);
  const homeCalculations={...calculations};await tick();assert.deepEqual(calculations,homeCalculations);assert.equal(requests['/api/history'],transfers);
  document.hidden=true;documentEvents.visibilitychange();
  console.log('Interface: all 105 comparisons, four ranking tables, SEC-only/funding-only refresh, source failure/neutral colors and independent TLT funding OK');
  console.log('Interface: ten idle polls cause no history transfer, statistics recalculation or card rewrites; hidden tab/return, cached frame/locale/positions and coalesced canvas drawing OK');
+ console.log('Interface: external references load only on demand/version change; no Hyperliquid fallback for unavailable external markets; hidden tabs remain idle');
 }
 (async()=>{await testHistory();await testPoller();await testInterface();})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -9,6 +9,7 @@
 #include <string.h>
 #include "core.h"
 #include "sources.h"
+#include "public_prices.h"
 #include "resources.h"
 #define PORT 18764
 #define TRAY_MSG (WM_APP+1)
@@ -28,13 +29,14 @@ static SOCKET listener=INVALID_SOCKET;
 static NOTIFYICONDATAW tray;
 static void request_collection(void){InterlockedExchange(&requested,1);if(collector_event)SetEvent(collector_event);}
 static void request_shutdown(void){InterlockedExchange(&oil_stop,1);if(shutdown_event)SetEvent(shutdown_event);}
-static void history_stamp(char *out,size_t capacity){
+static void file_stamp(const wchar_t *path,char *out,size_t capacity){
     WIN32_FILE_ATTRIBUTE_DATA attributes;ULARGE_INTEGER time,size;
-    out[0]=0;if(!GetFileAttributesExW(L"data/history.json",GetFileExInfoStandard,&attributes))return;
+    out[0]=0;if(!GetFileAttributesExW(path,GetFileExInfoStandard,&attributes))return;
     time.LowPart=attributes.ftLastWriteTime.dwLowDateTime;time.HighPart=attributes.ftLastWriteTime.dwHighDateTime;
     size.LowPart=attributes.nFileSizeLow;size.HighPart=attributes.nFileSizeHigh;
     snprintf(out,capacity,"%llx-%llx",(unsigned long long)time.QuadPart,(unsigned long long)size.QuadPart);
 }
+static void history_stamp(char *out,size_t capacity){file_stamp(L"data/history.json",out,capacity);}
 static int header_equals(const char *request,const char *name,const char *value){
     const char *line=strstr(request,"\r\n");size_t name_len=strlen(name),value_len=strlen(value);
     while(line && line[2]){
@@ -144,10 +146,11 @@ static int save_data(void) {
     LeaveCriticalSection(&file_lock);free(s);if(!ok){DWORD error=GetLastError();snprintf(db.lastError,sizeof(db.lastError),"STORE_WIN32_%lu",(unsigned long)error);oil_log("ERROR saving history code=%s",db.lastError);}return ok;
 }
 static int sync_once(void) {
-    static int benchmark_started=0;
+    static int benchmark_started=0,source_started=0,public_started=0;
     int ok;InterlockedExchange(&syncing,1);oil_log("Synchronization started");
     tlt_sec_sync(&db.tltSecYield,!benchmark_started);benchmark_started=1;
-    sources_sync(&db,db.marketReferences==NULL);
+    sources_sync(&db,!source_started);source_started=1;
+    public_prices_sync(&db,!public_started);public_started=1;
     ok=database_sync(&db);if(!save_data())ok=0;
     EnterCriticalSection(&file_lock);strcpy_s(status_error,sizeof(status_error),db.lastError);status_successful=db.successful;status_attempted=db.attempted;LeaveCriticalSection(&file_lock);
     InterlockedExchange(&last_ok,ok);InterlockedExchange(&syncing,0);
@@ -243,10 +246,10 @@ static void handle_client(SOCKET s) {
     if(strcmp(method,"GET")){respond(s,405,"text/plain","GET requis",10);return;}
     if(!strcmp(path,"/api/startup")){const char *status=startup_enabled()?"{\"enabled\":true}":"{\"enabled\":false}";respond(s,200,"application/json",status,strlen(status));return;}
     if(!strcmp(path,"/api/status")) {
-        char status[768],stamp[80];int len,ready,busy;uint64_t revision;
+        char status[900],stamp[80],public_stamp[80];int len,ready,busy;uint64_t revision;
         EnterCriticalSection(&account_lock);revision=account_revision;ready=account_cache!=NULL;busy=account_busy||account_pending;LeaveCriticalSection(&account_lock);
-        EnterCriticalSection(&file_lock);history_stamp(stamp,sizeof(stamp));
-        len=snprintf(status,sizeof(status),"{\"syncing\":%s,\"queued\":%s,\"lastOk\":%s,\"now\":%lld,\"errorCode\":\"%s\",\"historyVersion\":\"%s\",\"lastSuccessfulSync\":%lld,\"lastAttempt\":%lld,\"accountVersion\":%llu,\"accountReady\":%s,\"accountBusy\":%s}",syncing?"true":"false",requested?"true":"false",last_ok?"true":"false",(long long)now_ms(),status_error,stamp,(long long)status_successful,(long long)status_attempted,(unsigned long long)revision,ready?"true":"false",busy?"true":"false");
+        EnterCriticalSection(&file_lock);history_stamp(stamp,sizeof(stamp));file_stamp(L"data/public-prices.json",public_stamp,sizeof(public_stamp));
+        len=snprintf(status,sizeof(status),"{\"syncing\":%s,\"queued\":%s,\"lastOk\":%s,\"now\":%lld,\"errorCode\":\"%s\",\"historyVersion\":\"%s\",\"publicPricesVersion\":\"%s\",\"lastSuccessfulSync\":%lld,\"lastAttempt\":%lld,\"accountVersion\":%llu,\"accountReady\":%s,\"accountBusy\":%s}",syncing?"true":"false",requested?"true":"false",last_ok?"true":"false",(long long)now_ms(),status_error,stamp,public_stamp,(long long)status_successful,(long long)status_attempted,(unsigned long long)revision,ready?"true":"false",busy?"true":"false");
         LeaveCriticalSection(&file_lock);
         respond(s,200,"application/json",status,(size_t)len);return;
     }
@@ -257,13 +260,14 @@ static void handle_client(SOCKET s) {
         if(body){respond(s,200,"application/json",body,length);free(body);}
         else respond(s,200,"application/json", "{\"pending\":true}",16);return;
     }
-    if(!strcmp(path,"/api/history")) {
+    if(!strcmp(path,"/api/history") || !strcmp(path,"/api/public-prices")) {
         char stamp[80],tag[84],header[512];int header_len;
-        EnterCriticalSection(&file_lock);history_stamp(stamp,sizeof(stamp));snprintf(tag,sizeof(tag),"\"%s\"",stamp);
+        int external=!strcmp(path,"/api/public-prices");
+        EnterCriticalSection(&file_lock);file_stamp(external?L"data/public-prices.json":L"data/history.json",stamp,sizeof(stamp));snprintf(tag,sizeof(tag),"\"%s\"",stamp);
         if(stamp[0] && header_equals(req,"If-None-Match",tag)){
             LeaveCriticalSection(&file_lock);header_len=snprintf(header,sizeof(header),"HTTP/1.1 304 Not Modified\r\nETag: %s\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",tag);send_all(s,header,(size_t)header_len);return;
         }
-        body=read_file("data/history.json",&length);LeaveCriticalSection(&file_lock);
+        body=read_file(external?"data/public-prices.json":"data/history.json",&length);LeaveCriticalSection(&file_lock);
         if(!body){respond(s,404,"text/plain","Indisponible",12);return;}
         header_len=snprintf(header,sizeof(header),"HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: %zu\r\nETag: %s\r\nCache-Control: no-cache\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",length,tag);
         if(send_all(s,header,(size_t)header_len))send_all(s,body,length);free(body);return;

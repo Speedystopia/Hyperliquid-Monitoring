@@ -11,3 +11,4 @@ tests/private-*
 *.lnk
 data/references-*.jsonl
 data/cme/
+data/public-prices*.json

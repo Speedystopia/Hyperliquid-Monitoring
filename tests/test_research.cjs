@@ -1,0 +1,18 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const nodes=new Map(),document={hidden:false,querySelector:id=>{if(!nodes.has(id))nodes.set(id,{value:'',innerHTML:''});return nodes.get(id);}};
+const context={document,localStorage:{getItem:()=>null,setItem(){}},console};vm.createContext(context);
+vm.runInContext(fs.readFileSync(require.resolve('../web/research.js'),'utf8'),context);
+const result={correlation:{d90:{percent:89.8}},funding:{d30:{annualizedA:2.3,annualizedB:4.3,estimatedNetOnLegAPct:-.15}},hedge:{ratio:.5,directionA:'long',directionB:'short'},quality:{fundingCoveragePct:100},flags:['NEGATIVE_RECENT_CARRY','WEAK_CORRELATION']};
+const view=context.createResearchView({analysis:{defaults:{anchorNotionalUsdc:1000,feeBps:4.5,slippageBps:2,rebalanceDays:7},analyzePair:()=>result},catalog:{assets:{}},translate:s=>s,format:(n,d)=>Number.isFinite(n)?n.toFixed(d):'—',date:()=>'',escape:s=>String(s)});
+const html=view.summary({},'A','B',{directionA:1,directionB:-1});
+assert.ok(html.includes('Funding net 30 jours · montants égaux : +2.000 % / an'));
+assert.ok(html.includes('Funding net 30 jours · ratio ajusté : -0.150 % / an'));
+assert.ok(html.includes('Ratio de positions B / A : 0.500 · Long A / Short B'));
+assert.ok(html.includes('Base : notionnel de la jambe A'));
+assert.ok(html.includes('Funding net sur 30 jours négatif · ratio ajusté'));
+assert.ok(html.includes('Force de corrélation sous le seuil de 66 %'));
+assert.ok(view.summary({},'A','B',{directionA:-1,directionB:1}).includes('montants égaux : -2.000'));
+assert.ok(view.summary({},'A','B',{directionA:1,directionB:1}).includes('montants égaux : -6.600'));
+assert.ok(view.summary({},'A','B',{directionA:-1,directionB:-1}).includes('montants égaux : +6.600'));
+console.log('Research: equal-notional row directions and adjusted 30-day diagnostics remain distinct; strength warning identifies the correlation threshold');

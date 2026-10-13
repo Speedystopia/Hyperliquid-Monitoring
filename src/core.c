@@ -9,6 +9,7 @@
 #include <math.h>
 #include <ctype.h>
 #include "core.h"
+#include "sources.h"
 const char *OIL_COINS[OIL_MARKET_COUNT] = {"xyz:BRENTOIL","xyz:CL","xyz:HO","xyz:NATGAS","BTC","xyz:MSTR","xyz:GOLD","xyz:EUR","xyz:SP500","xyz:TLT","xyz:XYZ100","xyz:COPPER","xyz:JPY","ETH","xyz:SILVER"};
 const char *OIL_NAMES[OIL_MARKET_COUNT] = {"BRENTOIL","WTIOIL","DIESEL","NATGAS","BTC","MSTR","GOLD","EURUSD","SP500","TLT","XYZ100","COPPER","USDJPY","ETH","SILVER"};
 const char *OIL_REQUESTED[OIL_MARKET_COUNT] = {"xyz:BRENTOIL","xyz:WTIOIL","xyz:DIESEL","xyz:NATGAS","BTC","xyz:MSTR","xyz:GOLD","xyz:EURUSD","xyz:SP500","xyz:TLT","xyz:XYZ100","xyz:COPPER","xyz:USDJPY","ETH","xyz:SILVER"};
@@ -346,6 +347,7 @@ cJSON *account_scan(const char *address) {
     cJSON_AddNumberToObject(root,"scannedAt",(double)now_ms());
     if(!address_valid(address)){cJSON_AddItemToArray(errors,cJSON_CreateString("Adresse invalide"));return root;}
     cJSON_AddStringToObject(root,"address",address);
+    cJSON_AddItemToObject(root,"fees",sources_account_fees(address));
     if(!scan_one(positions,address,"Compte principal"))cJSON_AddItemToArray(errors,cJSON_CreateString("Lecture du compte principal impossible"));
     snprintf(body,sizeof(body),"{\"type\":\"subAccounts\",\"user\":\"%s\"}",address);subs=api_request(body,1);
     if(!subs || (!cJSON_IsArray(subs)&&!cJSON_IsNull(subs)))cJSON_AddItemToArray(errors,cJSON_CreateString("Liste des sous-comptes indisponible : resultats partiels"));

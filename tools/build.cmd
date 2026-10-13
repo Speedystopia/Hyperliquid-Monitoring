@@ -12,7 +12,7 @@ call "%VSROOT%\VC\Auxiliary\Build\vcvars64.bat" >nul
 if not exist build mkdir build
 rc /nologo /I src /I . /fo build/assets.res src/assets.rc
 if errorlevel 1 exit /b 1
-cl /nologo /std:c17 /O2 /MT /W4 /WX /DUNICODE /D_UNICODE /utf-8 /I vendor src\app.c src\core.c src\benchmark.c src\sources.c vendor\cJSON.c build\assets.res /Fo:build\ /Fe:OilPerps.exe /link /SUBSYSTEM:WINDOWS winhttp.lib ws2_32.lib shell32.lib user32.lib advapi32.lib
+cl /nologo /std:c17 /O2 /MT /W4 /WX /DUNICODE /D_UNICODE /utf-8 /I vendor src\app.c src\core.c src\benchmark.c src\sources.c src\public_prices.c vendor\cJSON.c build\assets.res /Fo:build\ /Fe:OilPerps.exe /link /SUBSYSTEM:WINDOWS winhttp.lib ws2_32.lib shell32.lib user32.lib advapi32.lib
 if errorlevel 1 exit /b 1
 cl /nologo /std:c17 /O2 /MT /W4 /DOIL_TEST /utf-8 /I vendor tests\test_core.c src\core.c src\benchmark.c src\sources.c vendor\cJSON.c /Fo:build\ /Fe:build\test_core.exe /link winhttp.lib
 if errorlevel 1 exit /b 1
@@ -21,6 +21,10 @@ if errorlevel 1 exit /b 1
 cl /nologo /std:c17 /O2 /MT /W4 /WX /utf-8 /I vendor tests\test_sources.c src\core.c src\benchmark.c src\sources.c vendor\cJSON.c /Fo:build\ /Fe:build\test_sources.exe /link winhttp.lib
 if errorlevel 1 exit /b 1
 build\test_sources.exe
+if errorlevel 1 exit /b 1
+cl /nologo /std:c17 /O2 /MT /W4 /WX /utf-8 /I vendor tests\test_public_prices.c src\core.c src\benchmark.c src\sources.c src\public_prices.c vendor\cJSON.c /Fo:build\ /Fe:build\test_public_prices.exe /link winhttp.lib
+if errorlevel 1 exit /b 1
+build\test_public_prices.exe
 if errorlevel 1 exit /b 1
 powershell -NoProfile -Command "$p=Start-Process .\OilPerps.exe -ArgumentList --verify-bundle -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode"
 if errorlevel 1 exit /b 1
@@ -33,6 +37,8 @@ if errorlevel 1 exit /b 1
 node tests\test_analysis.cjs
 if errorlevel 1 exit /b 1
 node tests\test_research_i18n.cjs
+if errorlevel 1 exit /b 1
+node tests\test_research.cjs
 exit /b %errorlevel%
 :missing
 echo Installez Visual Studio Build Tools avec "Developpement Desktop en C++".

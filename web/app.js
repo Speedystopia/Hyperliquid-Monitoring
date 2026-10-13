@@ -3,8 +3,10 @@ const M=OilMath,C=OilCatalog,$=s=>document.querySelector(s),colors=['#f6b66b','#
 let markets=['BRENTOIL','WTIOIL'],route='home';
 const L=OilI18n.translate;
 let history=null,account=null,chosenAddress='',frame='4h',view=null,series=[],lastAccountVersion=null,startupLoaded=false;
+let publicPrices=null,publicError='';
 let seriesSource=null,analysisCache=null,summarySource=null,summaryCache=[],levelSource=null,levelCache=[],lastStatusText=null,lastSuccess=null,annualStats=[];
 const frameCache=new Map(),historyClient=OilUpdates.createHistoryClient(fetch,data=>data?.schemaVersion===3&&C.keys.every(m=>['fundingHourly','close4h','close1d'].every(k=>Array.isArray(data.markets?.[m]?.[k]?.rows))));
+const publicPriceClient=OilUpdates.createHistoryClient((path,options)=>fetch('/api/public-prices',options),data=>data?.schemaVersion===1&&data.markets&&Object.values(data.markets).every(m=>Array.isArray(m.close1d?.rows)));
 const names=Object.fromEntries(C.keys.map(m=>[m,C.assets[m].name])),unit=m=>C.assets[m].unit||'USD',precision=m=>C.assets[m].precision||(m==='EURUSD'?5:2),step=()=>frame==='4h'?4*M.HOUR:24*M.HOUR;
 let formatterLocale='';const numberFormats=new Map(),dateFormats=new Map();
 function prepareFormats(){if(formatterLocale!==OilI18n.locale){formatterLocale=OilI18n.locale;numberFormats.clear();dateFormats.clear();}}
@@ -121,9 +123,10 @@ class Chart{
 const charts=[new Chart('funding','funding'),new Chart('price','price'),new Chart('combined','combined')];function drawAll(){if(route!=='home'&&route!=='global')charts.forEach(c=>c.requestDraw());}
 const researchView=createResearchView({analysis:OilAnalysis,catalog:C,translate:L,format:fmt,date,escape:esc});
 const globalView=createGlobalView({math:M,catalog:C,research:researchView,translate:L,format:fmt,date,escape:esc});
-globalView.setChange(renderGlobal);
+globalView.setChange(()=>{renderGlobal();if(globalView.source==='public')poller.request();});
 researchView.setChange(()=>{if(route==='global')renderGlobal();});
-function renderGlobal(){globalView.render(history,'1d',0);researchView.render(history,markets);}
+function renderGlobal(){globalView.render(history,'1d',0,publicPrices,publicError);researchView.render(history,markets);}
+function updateResearchAccount(value){if(researchView.setAccount(value)&&route!=='home'){if(route==='global')renderGlobal();else researchView.render(history,markets);}}
 function renderNavigation(){
  for(const [i,id] of ['asset-a','asset-b'].entries()){
   $('#'+id).innerHTML=C.keys.map(m=>'<option value="'+m+'"'+(m===markets[1-i]?' disabled':'')+'>'+esc(names[m])+'</option>').join('');$('#'+id).value=markets[i];
@@ -166,8 +169,8 @@ document.querySelectorAll('[data-frame]').forEach(button=>button.onclick=()=>{fr
 $('#range').onchange=()=>{if(route==='global')renderGlobal();else{renderMetrics();renderInsights();resetView();}};$('#timezone').onchange=()=>{if(route==='global')renderGlobal();else{buildSeries();renderPositions();researchView.render(history,markets);drawAll();}};$('#reset').onclick=resetView;$('#overlays').onchange=drawAll;
 $('#sync').onclick=async()=>{try{const r=await fetch('/api/sync',{method:'POST',headers:{'X-Oil-Client':'1'}});if(!r.ok)throw Error('HTTP '+r.status);lastStatusText=null;$('#status').textContent=L('Synchronisation demandée…');poller.request();}catch(e){lastStatusText=null;$('#status').textContent=L(e.message);}};
 $('#account-form').onsubmit=async e=>{e.preventDefault();const address=$('#address').value.trim();if(!/^0x[0-9a-fA-F]{40}$/.test(address)){$('#account-status').textContent=L('Saisissez une adresse publique valide : 0x suivi de 40 caractères hexadécimaux.');return;}
- try{const r=await fetch('/api/account',{method:'POST',headers:{'X-Oil-Client':'1','X-Oil-Address':address}});if(!r.ok)throw Error('HTTP '+r.status);chosenAddress=address;account=null;clearAccountCaches();lastAccountVersion=null;$('#positions').innerHTML='';drawAll();$('#account-status').textContent=L('Lecture du compte et des sous-comptes en cours…');poller.request();}catch(e){$('#account-status').textContent=L('Échec du scan : '+e.message);}};
-$('#clear').onclick=async()=>{chosenAddress='';account=null;$('#address').value='';$('#account-status').textContent=L('Adresse effacée. Aucune adresse enregistrée.');renderPositions();await fetch('/api/account',{method:'POST',headers:{'X-Oil-Client':'1','X-Oil-Address':'clear'}}).catch(()=>{});};
+ try{const r=await fetch('/api/account',{method:'POST',headers:{'X-Oil-Client':'1','X-Oil-Address':address}});if(!r.ok)throw Error('HTTP '+r.status);chosenAddress=address;account=null;updateResearchAccount(null);clearAccountCaches();lastAccountVersion=null;$('#positions').innerHTML='';drawAll();$('#account-status').textContent=L('Lecture du compte et des sous-comptes en cours…');poller.request();}catch(e){$('#account-status').textContent=L('Échec du scan : '+e.message);}};
+$('#clear').onclick=async()=>{chosenAddress='';account=null;updateResearchAccount(null);$('#address').value='';$('#account-status').textContent=L('Adresse effacée. Aucune adresse enregistrée.');renderPositions();await fetch('/api/account',{method:'POST',headers:{'X-Oil-Client':'1','X-Oil-Address':'clear'}}).catch(()=>{});};
 async function refresh(signal){
  if(document.hidden||signal.aborted)return;
  try{
@@ -177,8 +180,12 @@ async function refresh(signal){
   if(status.lastSuccessfulSync!==lastSuccess){lastSuccess=status.lastSuccessfulSync;updateCollectionTime();}
   {const snapshot=await historyClient.load(status.historyVersion,signal);if(document.hidden||signal.aborted)return;
    if(snapshot.changed){history=snapshot.data;seriesSource=null;frameCache.clear();analysisCache=null;annualStats=[];globalView.invalidate();if(route==='home')renderHome();else if(route==='global')renderGlobal();else{const old=view;buildSeries();researchView.render(history,markets);if(!old)resetView();else{view=old;drawAll();}}}}
+  if(route==='global'&&globalView.source==='public'){
+   try{const snapshot=await publicPriceClient.load(status.publicPricesVersion,signal);if(document.hidden||signal.aborted)return;const priorError=publicError;publicPrices=snapshot.data;publicError='';if(snapshot.changed||priorError){globalView.invalidate();renderGlobal();}}
+   catch(error){if(error.name==='AbortError'||document.hidden)return;const message=L('Références publiques indisponibles')+' · '+error.message;if(message!==publicError){publicError=message;renderGlobal();}}
+  }
   if(chosenAddress&&status.accountReady&&status.accountVersion!==lastAccountVersion){const a=await get('/api/account',signal);if(document.hidden||signal.aborted)return;
-   if(!a.pending&&a.address?.toLowerCase()===chosenAddress.toLowerCase()){account=a;lastAccountVersion=status.accountVersion;clearAccountCaches();if(route!=='home'&&route!=='global')renderPositions();}}
+   if(!a.pending&&a.address?.toLowerCase()===chosenAddress.toLowerCase()){account=a;updateResearchAccount(a);lastAccountVersion=status.accountVersion;clearAccountCaches();if(route!=='home'&&route!=='global')renderPositions();}}
   if(!startupLoaded){await refreshStartup(signal);if(document.hidden||signal.aborted)return;}
   return status.syncing||status.queued||(chosenAddress&&(!account||status.accountBusy))?2000:15000;
  }catch(e){if(e.name==='AbortError'||document.hidden)return;lastStatusText=null;$('#light').className='error';$('#status').textContent=L(history?'Collecteur inaccessible · données affichées conservées':'En attente du premier JSON…');$('#error-code').textContent=L('Erreur de connexion')+': '+e.message;return 15000;}
