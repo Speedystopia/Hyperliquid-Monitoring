@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "core.h"
+#include "sources.h"
 #include "resources.h"
 #define PORT 18764
 #define TRAY_MSG (WM_APP+1)
@@ -146,6 +147,7 @@ static int sync_once(void) {
     static int benchmark_started=0;
     int ok;InterlockedExchange(&syncing,1);oil_log("Synchronization started");
     tlt_sec_sync(&db.tltSecYield,!benchmark_started);benchmark_started=1;
+    sources_sync(&db,db.marketReferences==NULL);
     ok=database_sync(&db);if(!save_data())ok=0;
     EnterCriticalSection(&file_lock);strcpy_s(status_error,sizeof(status_error),db.lastError);status_successful=db.successful;status_attempted=db.attempted;LeaveCriticalSection(&file_lock);
     InterlockedExchange(&last_ok,ok);InterlockedExchange(&syncing,0);
@@ -269,6 +271,8 @@ static void handle_client(SOCKET s) {
     else if(!strcmp(path,"/") || !strcmp(path,"/index.html"))body=resource_text(OIL_HTML,&length);
     else if(!strcmp(path,"/app.js"))body=resource_text(OIL_APP_JS,&length);
     else if(!strcmp(path,"/math.js"))body=resource_text(OIL_MATH_JS,&length);
+    else if(!strcmp(path,"/analysis.js"))body=resource_text(OIL_ANALYSIS_JS,&length);
+    else if(!strcmp(path,"/research.js"))body=resource_text(OIL_RESEARCH_JS,&length);
     else if(!strcmp(path,"/i18n.js"))body=resource_text(OIL_I18N_JS,&length);
     else if(!strcmp(path,"/updates.js"))body=resource_text(OIL_UPDATES_JS,&length);
     else if(!strcmp(path,"/catalog.js"))body=resource_text(OIL_CATALOG_JS,&length);
@@ -310,7 +314,7 @@ static int run(int argc,wchar_t **argv) {
     for(i=1;i<argc;i++){if(!wcscmp(argv[i],L"--sync"))once=1;else if(!wcscmp(argv[i],L"--background"))background=1;
         else if(!wcscmp(argv[i],L"--verify-bundle")){
             Database check={0};char *seed;int id,ok;
-            for(id=OIL_HTML;id<=OIL_SEC_SEED;id++){char *asset=resource_text(id,NULL);if(!asset)return 4;free(asset);}
+            for(id=OIL_HTML;id<=OIL_RESEARCH_JS;id++){char *asset=resource_text(id,NULL);if(!asset)return 4;free(asset);}
             seed=resource_text(OIL_SEED,NULL);ok=seed&&database_load(&check,seed);free(seed);database_free(&check);return ok?0:4;
         }
         else if(!wcscmp(argv[i],L"--install-startup"))return (int)startup_set(1);

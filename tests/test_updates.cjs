@@ -82,12 +82,12 @@ async function testInterface(){
  const context={OilMath:instrumented,OilUpdates:{createHistoryClient,createPoller},OilI18n:i18n,fetch:fakeFetch,document,window:{location:{hash:'#monitor/BRENTOIL/WTIOIL'},scrollTo(){},devicePixelRatio:1,addEventListener:(name,fn)=>windowEvents[name]=fn},
   ResizeObserver:class{constructor(fn){this.fn=fn;resizeCallbacks.push(fn);}observe(){this.fn();}},requestAnimationFrame:fn=>{const id=++rafId;rafs.set(id,fn);return id;},cancelAnimationFrame:id=>rafs.delete(id),
   setTimeout:(fn,ms)=>{const id=++timerId;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id),AbortController,DOMException,console};
- vm.createContext(context);vm.runInContext(fs.readFileSync(require.resolve('../web/updates.js'),'utf8'),context);vm.runInContext(fs.readFileSync(require.resolve('../web/catalog.js'),'utf8'),context);vm.runInContext(fs.readFileSync(require.resolve('../web/global.js'),'utf8'),context);vm.runInContext(fs.readFileSync(require.resolve('../web/app.js'),'utf8'),context);
+ vm.createContext(context);for(const script of ['updates','catalog','analysis','research','global','app'])vm.runInContext(fs.readFileSync(require.resolve('../web/'+script+'.js'),'utf8'),context);
  function draw(){const batch=[...rafs.values()];rafs.clear();for(const callback of batch)callback();}
  async function tick(){assert.equal(timers.size,1);const timer=[...timers.values()][0];await timer.fn();await settle();draw();}
  await settle();draw();assert.equal(requests['/api/history'],1);assert.equal(requests['/api/startup'],1);
  const baseline={...calculations},cardWrites={...writes},resizes=canvasResizes;
- for(let i=0;i<10;i++)await tick();assert.equal(requests['/api/history'],1);assert.deepEqual(calculations,baseline);assert.equal(writes.metrics,cardWrites.metrics);assert.equal(writes.insights,cardWrites.insights);
+ for(let i=0;i<10;i++)await tick();assert.equal(requests['/api/history'],1);assert.deepEqual(calculations,baseline);assert.equal(writes.metrics,cardWrites.metrics);assert.equal(writes.insights,cardWrites.insights);assert.equal(writes['research-results'],cardWrites['research-results']);assert.equal(writes['reference-cards'],cardWrites['reference-cards']);
  for(let i=0;i<20;i++)element('funding').events.pointermove({clientX:200+i,clientY:100});assert.equal(rafs.size,1);draw();assert.equal(canvasResizes,resizes);
  document.hidden=true;documentEvents.visibilitychange();assert.equal(timers.size,0);assert.equal(rafs.size,0);const hiddenRequests={...requests};revision++;hours++;
  for(const fn of resizeCallbacks)fn();await settle();assert.deepEqual(requests,hiddenRequests);assert.equal(rafs.size,0);

@@ -9,3 +9,5 @@ data/history.tmp.json
 data/history.corrupt.json
 tests/private-*
 *.lnk
+data/references-*.jsonl
+data/cme/

@@ -119,9 +119,11 @@ class Chart{
  }
 }
 const charts=[new Chart('funding','funding'),new Chart('price','price'),new Chart('combined','combined')];function drawAll(){if(route!=='home'&&route!=='global')charts.forEach(c=>c.requestDraw());}
-const globalView=createGlobalView({math:M,catalog:C,translate:L,format:fmt,date,escape:esc});
+const researchView=createResearchView({analysis:OilAnalysis,catalog:C,translate:L,format:fmt,date,escape:esc});
+const globalView=createGlobalView({math:M,catalog:C,research:researchView,translate:L,format:fmt,date,escape:esc});
 globalView.setChange(renderGlobal);
-function renderGlobal(){globalView.render(history,'1d',0);}
+researchView.setChange(()=>{if(route==='global')renderGlobal();});
+function renderGlobal(){globalView.render(history,'1d',0);researchView.render(history,markets);}
 function renderNavigation(){
  for(const [i,id] of ['asset-a','asset-b'].entries()){
   $('#'+id).innerHTML=C.keys.map(m=>'<option value="'+m+'"'+(m===markets[1-i]?' disabled':'')+'>'+esc(names[m])+'</option>').join('');$('#'+id).value=markets[i];
@@ -152,16 +154,16 @@ function switchPage(){
  if(next!==route||chosen.join('|')!==markets.join('|')){charts.forEach(c=>c.suspend());route=next;markets=chosen;analysisCache=null;annualStats=[];clearAccountCaches();view=null;series=[];}
  $('#home-view').hidden=route!=='home';$('#monitor-content').hidden=route==='home';$('#page-intro').hidden=route==='home';$('#pair-view').hidden=route==='global';$('#global-view').hidden=route!=='global';$('#reset').hidden=route==='global';$('#monitor-toolbar').hidden=route==='global';
  renderNavigation();renderPageLabels();
- if(route==='home')renderHome();else if(route==='global')renderGlobal();else{buildSeries();resetView();renderPositions();}
+ if(route==='home')renderHome();else if(route==='global')renderGlobal();else{buildSeries();resetView();renderPositions();researchView.render(history,markets);}
  window.scrollTo({top:0,behavior:'instant'});
 }
 for(const [i,id] of ['asset-a','asset-b'].entries())$('#'+id).onchange=()=>{
- const chosen=[...markets];chosen[i]=$('#'+id).value;if(chosen[0]===chosen[1])return;window.location.hash='monitor/'+chosen.join('/');
+ const chosen=[...markets];chosen[i]=$('#'+id).value;if(chosen[0]===chosen[1])return;if(route==='global'){markets=chosen;analysisCache=null;annualStats=[];clearAccountCaches();renderNavigation();renderGlobal();}else window.location.hash='monitor/'+chosen.join('/');
 };
 window.addEventListener('hashchange',switchPage);
 function updateCollectionTime(){const time=lastSuccess??history?.lastSuccessfulSync;$('#updated').textContent=L('Dernière collecte : '+(time?date(time):'en attente'));}
 document.querySelectorAll('[data-frame]').forEach(button=>button.onclick=()=>{frame=button.dataset.frame;document.querySelectorAll('[data-frame]').forEach(b=>b.classList.toggle('active',b===button));if(route==='global')renderGlobal();else{buildSeries();resetView();}});
-$('#range').onchange=()=>{if(route==='global')renderGlobal();else{renderMetrics();renderInsights();resetView();}};$('#timezone').onchange=()=>{if(route==='global')renderGlobal();else{buildSeries();renderPositions();drawAll();}};$('#reset').onclick=resetView;$('#overlays').onchange=drawAll;
+$('#range').onchange=()=>{if(route==='global')renderGlobal();else{renderMetrics();renderInsights();resetView();}};$('#timezone').onchange=()=>{if(route==='global')renderGlobal();else{buildSeries();renderPositions();researchView.render(history,markets);drawAll();}};$('#reset').onclick=resetView;$('#overlays').onchange=drawAll;
 $('#sync').onclick=async()=>{try{const r=await fetch('/api/sync',{method:'POST',headers:{'X-Oil-Client':'1'}});if(!r.ok)throw Error('HTTP '+r.status);lastStatusText=null;$('#status').textContent=L('Synchronisation demandée…');poller.request();}catch(e){lastStatusText=null;$('#status').textContent=L(e.message);}};
 $('#account-form').onsubmit=async e=>{e.preventDefault();const address=$('#address').value.trim();if(!/^0x[0-9a-fA-F]{40}$/.test(address)){$('#account-status').textContent=L('Saisissez une adresse publique valide : 0x suivi de 40 caractères hexadécimaux.');return;}
  try{const r=await fetch('/api/account',{method:'POST',headers:{'X-Oil-Client':'1','X-Oil-Address':address}});if(!r.ok)throw Error('HTTP '+r.status);chosenAddress=address;account=null;clearAccountCaches();lastAccountVersion=null;$('#positions').innerHTML='';drawAll();$('#account-status').textContent=L('Lecture du compte et des sous-comptes en cours…');poller.request();}catch(e){$('#account-status').textContent=L('Échec du scan : '+e.message);}};
@@ -174,7 +176,7 @@ async function refresh(signal){
   if(stateKey!==lastStatusText){lastStatusText=stateKey;$('#light').className=status.lastOk?'ok':'error';$('#status').textContent=L(status.syncing?'Collecte en cours…':status.queued?'Collecte demandée…':status.lastOk?'Collecteur actif · prochain passage à HH:01':'Collecte incomplète · nouvelle tentative sous 5 min');$('#sync').disabled=status.syncing;$('#error-code').textContent=status.errorCode?L('Code erreur')+': '+status.errorCode+' · data/collector.log':'';}
   if(status.lastSuccessfulSync!==lastSuccess){lastSuccess=status.lastSuccessfulSync;updateCollectionTime();}
   {const snapshot=await historyClient.load(status.historyVersion,signal);if(document.hidden||signal.aborted)return;
-   if(snapshot.changed){history=snapshot.data;seriesSource=null;frameCache.clear();analysisCache=null;annualStats=[];globalView.invalidate();if(route==='home')renderHome();else if(route==='global')renderGlobal();else{const old=view;buildSeries();if(!old)resetView();else{view=old;drawAll();}}}}
+   if(snapshot.changed){history=snapshot.data;seriesSource=null;frameCache.clear();analysisCache=null;annualStats=[];globalView.invalidate();if(route==='home')renderHome();else if(route==='global')renderGlobal();else{const old=view;buildSeries();researchView.render(history,markets);if(!old)resetView();else{view=old;drawAll();}}}}
   if(chosenAddress&&status.accountReady&&status.accountVersion!==lastAccountVersion){const a=await get('/api/account',signal);if(document.hidden||signal.aborted)return;
    if(!a.pending&&a.address?.toLowerCase()===chosenAddress.toLowerCase()){account=a;lastAccountVersion=status.accountVersion;clearAccountCaches();if(route!=='home'&&route!=='global')renderPositions();}}
   if(!startupLoaded){await refreshStartup(signal);if(document.hidden||signal.aborted)return;}
@@ -182,7 +184,7 @@ async function refresh(signal){
  }catch(e){if(e.name==='AbortError'||document.hidden)return;lastStatusText=null;$('#light').className='error';$('#status').textContent=L(history?'Collecteur inaccessible · données affichées conservées':'En attente du premier JSON…');$('#error-code').textContent=L('Erreur de connexion')+': '+e.message;return 15000;}
 }
 const poller=OilUpdates.createPoller({check:refresh,hidden:()=>document.hidden});
-$('#language').onchange=()=>{OilI18n.set($('#language').value);renderNavigation();renderPageLabels();if(route==='home')renderHome();else if(route==='global')renderGlobal();else{buildSeries();renderPositions();drawAll();}poller.request();};
+$('#language').onchange=()=>{OilI18n.set($('#language').value);renderNavigation();renderPageLabels();if(route==='home')renderHome();else if(route==='global')renderGlobal();else{buildSeries();renderPositions();researchView.render(history,markets);drawAll();}poller.request();};
 async function refreshStartup(signal){try{const state=await get('/api/startup',signal);if(document.hidden||signal?.aborted)return;$('#startup').checked=state.enabled;$('#startup').disabled=false;startupLoaded=true;}catch(error){if(error.name!=='AbortError'&&!document.hidden)$('#startup').disabled=true;}}
 $('#startup').onchange=async()=>{
  const control=$('#startup'),wanted=control.checked;control.disabled=true;

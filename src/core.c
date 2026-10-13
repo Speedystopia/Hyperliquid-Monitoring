@@ -118,6 +118,8 @@ cJSON *database_json(const Database *db) {
     cJSON_AddNumberToObject(root,"lastSuccessfulSync",(double)db->successful);
     cJSON_AddStringToObject(root,"lastError",db->lastError);
     {cJSON *benchmarks=cJSON_CreateObject();cJSON_AddItemToObject(benchmarks,"tltSecYield",tlt_sec_json(&db->tltSecYield));cJSON_AddItemToObject(root,"benchmarks",benchmarks);}
+    if(db->marketReferences)cJSON_AddItemToObject(root,"marketReferences",cJSON_Duplicate(db->marketReferences,1));
+    if(db->externalData)cJSON_AddItemToObject(root,"externalData",cJSON_Duplicate(db->externalData,1));
     for(i=0;i<OIL_MARKET_COUNT;i++) {
         const Market *m=&db->markets[i]; cJSON *o=cJSON_CreateObject();
         int64_t a=m->funding.count?m->funding.points[0].time:0;
@@ -174,11 +176,15 @@ int database_load(Database *db,const char *text) {
     tmp.attempted=(int64_t)attempt;tmp.successful=(int64_t)success;}
     {cJSON *error=cJSON_GetObjectItemCaseSensitive(root,"lastError");if(cJSON_IsString(error))strncpy_s(tmp.lastError,sizeof(tmp.lastError),error->valuestring,_TRUNCATE);}
     tlt_sec_load(&tmp.tltSecYield,cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(root,"benchmarks"),"tltSecYield"));
+    {cJSON *quotes=cJSON_GetObjectItemCaseSensitive(root,"marketReferences"),*external=cJSON_GetObjectItemCaseSensitive(root,"externalData");
+    if(cJSON_IsObject(quotes))tmp.marketReferences=cJSON_Duplicate(quotes,1);
+    if(cJSON_IsObject(external))tmp.externalData=cJSON_Duplicate(external,1);}
     database_free(db); *db=tmp; memset(&tmp,0,sizeof(tmp)); ok=1;
 done: cJSON_Delete(root); database_free(&tmp); return ok;
 }
 void database_free(Database *db) {
     int i; for(i=0;i<OIL_MARKET_COUNT;i++) {free(db->markets[i].funding.points);free(db->markets[i].close4h.points);free(db->markets[i].close1d.points);}
+    cJSON_Delete(db->marketReferences);cJSON_Delete(db->externalData);
     memset(db,0,sizeof(*db));
 }
 static int pause_ms(DWORD duration) {
