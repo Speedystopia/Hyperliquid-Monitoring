@@ -12,3 +12,7 @@ tests/private-*
 data/references-*.jsonl
 data/cme/
 data/public-prices*.json
+data/public-stocks-*.raw.json*
+data/public-download-*.status
+data/public-download-*.tmp*
+work/
