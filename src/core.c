@@ -9,9 +9,10 @@
 #include <math.h>
 #include <ctype.h>
 #include "core.h"
-const char *OIL_COINS[OIL_MARKET_COUNT] = {"xyz:BRENTOIL","xyz:CL","xyz:HO","xyz:NATGAS","BTC","xyz:MSTR","xyz:GOLD","xyz:EUR","xyz:SP500"};
-const char *OIL_NAMES[OIL_MARKET_COUNT] = {"BRENTOIL","WTIOIL","DIESEL","NATGAS","BTC","MSTR","GOLD","EURUSD","SP500"};
-const char *OIL_REQUESTED[OIL_MARKET_COUNT] = {"xyz:BRENTOIL","xyz:WTIOIL","xyz:DIESEL","xyz:NATGAS","BTC","xyz:MSTR","xyz:GOLD","xyz:EURUSD","xyz:SP500"};
+const char *OIL_COINS[OIL_MARKET_COUNT] = {"xyz:BRENTOIL","xyz:CL","xyz:HO","xyz:NATGAS","BTC","xyz:MSTR","xyz:GOLD","xyz:EUR","xyz:SP500","xyz:TLT","xyz:XYZ100","xyz:COPPER","xyz:JPY","ETH","xyz:SILVER"};
+const char *OIL_NAMES[OIL_MARKET_COUNT] = {"BRENTOIL","WTIOIL","DIESEL","NATGAS","BTC","MSTR","GOLD","EURUSD","SP500","TLT","XYZ100","COPPER","USDJPY","ETH","SILVER"};
+const char *OIL_REQUESTED[OIL_MARKET_COUNT] = {"xyz:BRENTOIL","xyz:WTIOIL","xyz:DIESEL","xyz:NATGAS","BTC","xyz:MSTR","xyz:GOLD","xyz:EURUSD","xyz:SP500","xyz:TLT","xyz:XYZ100","xyz:COPPER","xyz:USDJPY","ETH","xyz:SILVER"};
+static int legacy_native(int market){return !strcmp(OIL_COINS[market],"BTC") || !strcmp(OIL_COINS[market],"ETH");}
 volatile long oil_stop = 0;
 static char current_error[256]={0};
 static HANDLE shutdown_event=NULL;
@@ -73,7 +74,7 @@ cJSON *series_gaps(const Series *s,int64_t step,int64_t end) {
     return arr;
 }
 static void funding_gap_add(cJSON *arr,int64_t previous,int64_t next,int native_btc){
-    int64_t legacy_last=BTC_HOURLY_START-HOUR_MS;
+    int64_t legacy_last=NATIVE_HOURLY_START-HOUR_MS;
     if(native_btc && previous<legacy_last){
         int64_t last=next<=legacy_last?next-8*HOUR_MS:legacy_last;
         if(last>=previous+8*HOUR_MS)gap_add(arr,previous+8*HOUR_MS,last,8*HOUR_MS);
@@ -98,7 +99,7 @@ static cJSON *serialize_series(const Series *s,int funding,int64_t step,int64_t 
         cJSON_AddNumberToObject(row,"time",(double)p.time);
         if(funding) {
             cJSON_AddNumberToObject(row,"sourceTime",(double)p.sourceTime);
-            cJSON_AddNumberToObject(row,"intervalHours",native_btc && p.time<BTC_HOURLY_START?8:1);
+            cJSON_AddNumberToObject(row,"intervalHours",native_btc && p.time<NATIVE_HOURLY_START?8:1);
             cJSON_AddNumberToObject(row,"fundingRate",p.value); cJSON_AddNumberToObject(row,"premium",p.premium);
         } else cJSON_AddNumberToObject(row,"close",p.value);
         cJSON_AddItemToArray(arr,row);
@@ -107,11 +108,11 @@ static cJSON *serialize_series(const Series *s,int funding,int64_t step,int64_t 
 }
 cJSON *database_json(const Database *db) {
     cJSON *root=cJSON_CreateObject(),*markets=cJSON_CreateObject(); int i; int64_t t=now_ms();
-    cJSON_AddNumberToObject(root,"schemaVersion",2);
+    cJSON_AddNumberToObject(root,"schemaVersion",3);
     cJSON_AddNumberToObject(root,"fundingScheduleVersion",1);
     cJSON_AddStringToObject(root,"source","https://api.hyperliquid.xyz/info");
     cJSON_AddStringToObject(root,"timeConvention","UTC Unix milliseconds; time is period end, funding payment floored to hour");
-    cJSON_AddStringToObject(root,"fundingAggregation","Sum of actual rates for complete UTC 4h / 1d periods; intervalHours is 8 for BTC before 2023-06-08T01:00Z, otherwise 1; no splitting or compounding");
+    cJSON_AddStringToObject(root,"fundingAggregation","Sum of actual rates for complete UTC 4h / 1d periods; intervalHours is 8 for BTC/ETH before 2023-06-08T01:00Z, otherwise 1; no splitting or compounding");
     cJSON_AddStringToObject(root,"priceRetention","API exposes only latest 5000 candles per interval. Local rows are retained indefinitely.");
     cJSON_AddNumberToObject(root,"lastAttempt",(double)db->attempted);
     cJSON_AddNumberToObject(root,"lastSuccessfulSync",(double)db->successful);
@@ -122,7 +123,7 @@ cJSON *database_json(const Database *db) {
         int64_t b=m->close4h.count?m->close4h.points[0].time:0;
         cJSON_AddStringToObject(o,"apiCoin",OIL_COINS[i]);
         cJSON_AddStringToObject(o,"requestedCoin",OIL_REQUESTED[i]);
-        cJSON_AddItemToObject(o,"fundingHourly",serialize_series(&m->funding,1,HOUR_MS,t/HOUR_MS*HOUR_MS,i==4));
+        cJSON_AddItemToObject(o,"fundingHourly",serialize_series(&m->funding,1,HOUR_MS,t/HOUR_MS*HOUR_MS,legacy_native(i)));
         cJSON_AddItemToObject(o,"close4h",serialize_series(&m->close4h,0,4*HOUR_MS,t/(4*HOUR_MS)*(4*HOUR_MS),0));
         cJSON_AddItemToObject(o,"close1d",serialize_series(&m->close1d,0,DAY_MS,t/DAY_MS*DAY_MS,0));
         /* A first listing candle can start before the first funding payment. */
@@ -140,7 +141,7 @@ static int load_series(Series *s,const cJSON *obj,int funding,int64_t step,int n
         p.time=(int64_t)t; p.sourceTime=p.time;
         if(funding){double source=number(r,"sourceTime");const cJSON *interval=cJSON_GetObjectItemCaseSensitive(r,"intervalHours");
             if(!isfinite(source)||source<t||source>=t+HOUR_MS)return 0;p.sourceTime=(int64_t)source;
-            if(interval && (!cJSON_IsNumber(interval)||interval->valuedouble!=(native_btc && p.time<BTC_HOURLY_START?8:1)))return 0;
+            if(interval && (!cJSON_IsNumber(interval)||interval->valuedouble!=(native_btc && p.time<NATIVE_HOURLY_START?8:1)))return 0;
         }
         p.value=v; p.premium=funding?number(r,"premium"):0;
         if(!isfinite(p.premium) || (!funding && v<=0) || !series_put(s,p)) return 0;
@@ -150,7 +151,7 @@ static int load_series(Series *s,const cJSON *obj,int funding,int64_t step,int n
 int database_load(Database *db,const char *text) {
     Database tmp={0}; cJSON *root=cJSON_Parse(text),*markets; int i,ok=0;
     double version=number(root,"schemaVersion");
-    if(!root || (version!=1 && version!=2)) goto done;
+    if(!root || (version!=1 && version!=2 && version!=3)) goto done;
     tmp.loadedSchema=(int)version;
     {cJSON *schedule=cJSON_GetObjectItemCaseSensitive(root,"fundingScheduleVersion");
     if(schedule && (!cJSON_IsNumber(schedule)||schedule->valuedouble!=1))goto done;
@@ -161,9 +162,9 @@ int database_load(Database *db,const char *text) {
         cJSON *m=cJSON_GetObjectItemCaseSensitive(markets,OIL_NAMES[i]);
         cJSON *coin=cJSON_GetObjectItemCaseSensitive(m,"apiCoin");
         /* A legacy two-market file is expanded without losing its rows. */
-        if(version==1 && i>=2 && !m)continue;
+        if(((version==1 && i>=2)||(version==2 && i>=9)) && !m)continue;
         if(!cJSON_IsString(coin) || strcmp(coin->valuestring,OIL_COINS[i])) goto done;
-        if(!load_series(&tmp.markets[i].funding,cJSON_GetObjectItemCaseSensitive(m,"fundingHourly"),1,HOUR_MS,i==4) ||
+        if(!load_series(&tmp.markets[i].funding,cJSON_GetObjectItemCaseSensitive(m,"fundingHourly"),1,HOUR_MS,legacy_native(i)) ||
            !load_series(&tmp.markets[i].close4h,cJSON_GetObjectItemCaseSensitive(m,"close4h"),0,4*HOUR_MS,0) ||
            !load_series(&tmp.markets[i].close1d,cJSON_GetObjectItemCaseSensitive(m,"close1d"),0,DAY_MS,0)) goto done;
     }
@@ -289,7 +290,7 @@ int database_sync(Database *db) {
     int i,ok=1;int64_t t=now_ms();db->attempted=t;current_error[0]=0;
     for(i=0;i<OIL_MARKET_COUNT && !oil_stop;i++) {
         Market *m=&db->markets[i];
-        if(!sync_funding(&m->funding,OIL_COINS[i],t,i==4)) {ok=0;continue;}
+        if(!sync_funding(&m->funding,OIL_COINS[i],t,legacy_native(i))) {ok=0;continue;}
         if(!sync_prices(&m->close4h,OIL_COINS[i],"4h",4*HOUR_MS,t))ok=0;
         if(!sync_prices(&m->close1d,OIL_COINS[i],"1d",DAY_MS,t))ok=0;
     }

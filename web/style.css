@@ -17,3 +17,5 @@ header{display:grid;grid-template-columns:1fr auto 1fr;gap:20px}.language-bar{ma
 .matrix-negative-9{background:rgba(236,116,135,0.755)}.matrix-positive-9{background:rgba(82,185,153,0.755)}
 .matrix-negative-10{background:rgba(236,116,135,0.830)}.matrix-positive-10{background:rgba(82,185,153,0.830)}
 @media(max-width:1000px){.page-nav{flex-wrap:wrap}.asset-selectors{margin-left:0}}@media(max-width:750px){.ranked-grid{grid-template-columns:1fr}}@media(max-width:650px){.market-grid{grid-template-columns:1fr}.asset-selectors{flex-wrap:wrap;width:100%}.asset-selectors select{flex:1;min-width:85px}.asset-selectors label{display:none}}
+
+.global-settings{display:flex;gap:18px;align-items:center;margin:0 0 22px;font-size:12px;color:var(--muted);flex-wrap:wrap}.global-settings b{color:var(--wti);padding:9px 14px;border:1px solid var(--border);border-radius:7px}.large-matrix .matrix-table{min-width:1320px}.large-matrix .matrix-table th:first-child{width:88px}.large-matrix .matrix-cell{font-size:12px}.large-matrix .matrix-table th{font-size:10px}.control-label{font-size:11px}

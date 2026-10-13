@@ -12,17 +12,30 @@ int main(void) {
     p.time=2*HOUR_MS;p.sourceTime=p.time+19;p.value=-0.0002;assert(series_put(s,p));
     assert(series_put(s,p) && s->count==3);
     gaps=series_gaps(s,HOUR_MS,3*HOUR_MS);assert(cJSON_GetArraySize(gaps)==0);cJSON_Delete(gaps);
+    {Point close={4*HOUR_MS,4*HOUR_MS,4800,0},eth={NATIVE_HOURLY_START-9*HOUR_MS,NATIVE_HOURLY_START-9*HOUR_MS,0.0008,0};
+    assert(series_put(&db.markets[8].close4h,close));assert(series_put(&db.markets[13].funding,eth));}
     json=database_json(&db);text=cJSON_PrintUnformatted(json);cJSON_Delete(json);
     assert(database_load(&copy,text));assert(copy.markets[0].funding.count==3);
     assert(copy.markets[0].funding.points[1].value==-0.0002);
-    assert(OIL_MARKET_COUNT==9 && !strcmp(OIL_COINS[4],"BTC"));
+    assert(OIL_MARKET_COUNT==15 && !strcmp(OIL_COINS[4],"BTC"));
+    assert(copy.markets[13].funding.count==1 && !strcmp(OIL_COINS[13],"ETH"));
+    json=cJSON_Parse(text);
+    {cJSON *market=cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(json,"markets"),"ETH");
+    cJSON *funding=cJSON_GetObjectItemCaseSensitive(market,"fundingHourly");
+    cJSON *row=cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(funding,"rows"),0);
+    assert(cJSON_GetObjectItemCaseSensitive(row,"intervalHours")->valuedouble==8);}
+    cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(json,"schemaVersion"),2);
+    {int i;cJSON *m=cJSON_GetObjectItemCaseSensitive(json,"markets");for(i=9;i<OIL_MARKET_COUNT;i++)cJSON_DeleteItemFromObjectCaseSensitive(m,OIL_NAMES[i]);}
+    {char *legacy=cJSON_PrintUnformatted(json);assert(database_load(&copy,legacy));free(legacy);}
+    assert(copy.loadedSchema==2 && copy.markets[8].close4h.count==1 && !copy.markets[13].funding.count);cJSON_Delete(json);
+    puts("C: schema-2 migration preserves all nine existing assets and supports ETH legacy funding cadence OK");
     json=cJSON_Parse(text);cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(json,"schemaVersion"),1);
     {int i;cJSON *m=cJSON_GetObjectItemCaseSensitive(json,"markets");for(i=2;i<OIL_MARKET_COUNT;i++)cJSON_DeleteItemFromObjectCaseSensitive(m,OIL_NAMES[i]);}
     {char *legacy=cJSON_PrintUnformatted(json);assert(database_load(&copy,legacy));free(legacy);}
     assert(copy.markets[0].funding.count==3 && !copy.markets[4].funding.count);cJSON_Delete(json);
     json=database_json(&copy);assert(cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(json,"markets"))==OIL_MARKET_COUNT);cJSON_Delete(json);
-    puts("C: lossless legacy migration to nine shared assets, native BTC and canonical API aliases OK");
-    {Series native={0};Point n={0};n.value=0.0008;n.time=BTC_HOURLY_START-9*HOUR_MS;n.sourceTime=n.time;assert(series_put(&native,n));
+    puts("C: lossless legacy migration to fifteen shared assets, native BTC and canonical API aliases OK");
+    {Series native={0};Point n={0};n.value=0.0008;n.time=NATIVE_HOURLY_START-9*HOUR_MS;n.sourceTime=n.time;assert(series_put(&native,n));
     n.time+=8*HOUR_MS;n.sourceTime=n.time;assert(series_put(&native,n));n.time+=HOUR_MS;n.sourceTime=n.time;assert(series_put(&native,n));
     gaps=funding_gaps(&native,n.time,1);assert(!cJSON_GetArraySize(gaps));cJSON_Delete(gaps);
     n.time+=2*HOUR_MS;n.sourceTime=n.time;assert(series_put(&native,n));gaps=funding_gaps(&native,n.time,1);assert(cJSON_GetArraySize(gaps)==1);

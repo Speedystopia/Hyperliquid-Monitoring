@@ -96,7 +96,7 @@ static char *read_file(const char *path,size_t *length) {
 static int load_data(void) {
     char *s=read_file("data/history.json",NULL);int existed=GetFileAttributesW(L"data/history.json")!=INVALID_FILE_ATTRIBUTES;
     if(s && database_load(&db,s)){
-        int legacy=db.loadedSchema==1,upgrade=legacy || db.loadedFundingSchedule!=1;
+        int legacy=db.loadedSchema<3,upgrade=legacy || db.loadedFundingSchedule!=1;
         free(s);
         if(legacy){
             Database seed={0};int i;char *embedded=resource_text(OIL_SEED,NULL);

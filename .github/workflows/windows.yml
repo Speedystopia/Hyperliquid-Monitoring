@@ -17,5 +17,5 @@ jobs:
           Copy-Item OilPerps.exe -Destination package
       - uses: actions/upload-artifact@v4
         with:
-          name: Oil-Perps-Hyperliquid-Windows-x64
+          name: Hyperliquid-Monitoring-Windows-x64
           path: package/

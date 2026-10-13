@@ -50,7 +50,7 @@ async function testPoller(){
 async function testInterface(){
  const fs=require('node:fs'),vm=require('node:vm'),math=require('../web/math.js');
  const timers=new Map(),rafs=new Map(),elements=new Map(),documentEvents={},windowEvents={},resizeCallbacks=[];
- const requests={},calculations={},writes={};let timerId=0,rafId=0,canvasResizes=0,revision=1,hours=72,accountReady=false,accountVersion=0;
+ const requests={},calculations={},writes={};let timerId=0,rafId=0,canvasResizes=0,revision=1,hours=120,accountReady=false,accountVersion=0;
  const context2d=new Proxy({measureText:text=>({width:text.length*6})},{get:(target,key)=>target[key]||(()=>{})});
  function element(id){if(elements.has(id))return elements.get(id);let html='',width=0,height=0;
   const el={id,value:'',checked:false,disabled:false,style:{},dataset:{},events:{},parentElement:{},textContent:'',offsetWidth:180,offsetHeight:100,className:'',hidden:false,classList:{toggle(){},contains(){return false;}},
@@ -62,7 +62,7 @@ async function testInterface(){
  for(const id of ['range','timezone','language','overlays','funding','price','combined'])element(id);
  element('range').value='30';element('timezone').value='UTC';element('language').value='en';element('overlays').checked=true;
  const frames=['4h','1d'].map(frame=>{const el=element('frame-'+frame);el.dataset.frame=frame;return el;});
- function fixture(){const data={schemaVersion:2,lastSuccessfulSync:hours*math.HOUR,markets:{}};
+ function fixture(){const data={schemaVersion:3,lastSuccessfulSync:hours*math.HOUR,markets:{}};
   for(const [i,m] of require('../web/catalog.js').keys.entries()){const market={price4hReachesFundingStart:true};
    for(const [name,span] of [['fundingHourly',1],['close4h',4],['close1d',24]]){const rows=Array.from({length:Math.floor(hours/span)},(_,j)=>({time:(j+1)*span*math.HOUR,...(name==='fundingHourly'?{fundingRate:.00001*(i+1)}:{close:100+i*10+j*.3+(i===8?-10:10)*Math.sin(j)})}));market[name]={rows,count:rows.length,firstTime:rows[0]?.time||0,lastTime:rows.at(-1)?.time||0,missingRanges:[]};}
    data.markets[m]=market;
@@ -100,11 +100,11 @@ async function testInterface(){
  const catalog=require('../web/catalog.js');const transfers=requests['/api/history'];
  for(let i=0;i<catalog.keys.length;i++)for(let j=i+1;j<catalog.keys.length;j++){const chosen=[catalog.keys[i],catalog.keys[j]];context.window.location.hash='#monitor/'+chosen.join('/');windowEvents.hashchange();draw();for(const market of chosen)assert.ok(element('metrics').innerHTML.includes(catalog.assets[market].name));assert.equal(element('home-view').hidden,true);}
  context.window.location.hash='#global';windowEvents.hashchange();draw();assert.equal(element('global-view').hidden,false);for(const asset of catalog.keys)assert.ok(element('matrix').innerHTML.includes(catalog.assets[asset].name.replace(/&/g,'&amp;')));
- assert.ok(element('positive-pairs').innerHTML.includes('same-direction'));assert.ok(element('inverse-pairs').innerHTML.includes('inverse-row'));assert.ok(!element('matrix').innerHTML.includes('style='));const matrixCalls=calculations.correlationMatrix;await tick();assert.equal(calculations.correlationMatrix,matrixCalls);assert.equal(requests['/api/history'],transfers);element('correlation-mode').value='levels';element('correlation-mode').onchange();assert.equal(calculations.correlationMatrix,matrixCalls+1);
+ assert.ok(element('positive-pairs').innerHTML.includes('same-direction'));assert.ok(element('inverse-pairs').innerHTML.includes('inverse-row'));assert.ok(!element('matrix').innerHTML.includes('style='));assert.equal(element('monitor-toolbar').hidden,true);assert.ok(element('matrix-method').textContent.includes('Daily'));assert.ok(element('matrix-method').textContent.includes('Tout l’historique'));const matrixCalls=calculations.correlationMatrix;await tick();assert.equal(calculations.correlationMatrix,matrixCalls);assert.equal(requests['/api/history'],transfers);element('correlation-mode').value='levels';element('correlation-mode').onchange();assert.equal(calculations.correlationMatrix,matrixCalls+1);
  context.window.location.hash='#home';windowEvents.hashchange();draw();assert.equal(element('home-view').hidden,false);assert.equal(element('monitor-content').hidden,true);assert.equal((element('market-cards').innerHTML.match(/class=\"market-card/g)||[]).length,2);
  const homeCalculations={...calculations};await tick();assert.deepEqual(calculations,homeCalculations);assert.equal(requests['/api/history'],transfers);
  document.hidden=true;documentEvents.visibilitychange();
- console.log('Interface: all 36 freely selected comparisons, two ranking tables, global matrix, home navigation and no duplicated history transfers OK');
+ console.log('Interface: all 105 freely selected comparisons, two ranking tables, global matrix, home navigation and no duplicated history transfers OK');
  console.log('Interface: ten idle polls cause no history transfer, statistics recalculation or card rewrites; hidden tab/return, cached frame/locale/positions and coalesced canvas drawing OK');
 }
 (async()=>{await testHistory();await testPoller();await testInterface();})().catch(error=>{console.error(error);process.exitCode=1;});

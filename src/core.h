@@ -4,8 +4,8 @@
 #include "../vendor/cJSON.h"
 #define HOUR_MS INT64_C(3600000)
 #define DAY_MS (24 * HOUR_MS)
-#define OIL_MARKET_COUNT 9
-#define BTC_HOURLY_START INT64_C(1686186000000)
+#define OIL_MARKET_COUNT 15
+#define NATIVE_HOURLY_START INT64_C(1686186000000)
 typedef struct { int64_t time, sourceTime; double value, premium; } Point;
 typedef struct { Point *points; size_t count, capacity; } Series;
 typedef struct { Series funding, close4h, close1d; } Market;

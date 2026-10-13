@@ -26,12 +26,13 @@ function createGlobalView({math,catalog,translate,format,date,escape}){
     html+=`<td><button class="matrix-cell ${shade}" data-i="${i}" data-j="${j}" title="${escape(title)}" aria-label="${escape(title)}">${text}<small>${i===j?'—':c.count+' '+translate('points')}</small></button></td>`;
    }html+='</tr>';
   }
-  $('#matrix').innerHTML=html+'</tbody></table>';
+  $('#matrix').classList.toggle('large-matrix',series.length>12);$('#matrix').innerHTML=html+'</tbody></table>';
   $('#matrix').querySelectorAll('button').forEach(b=>{const show=()=>showCell(Number(b.dataset.i),Number(b.dataset.j));b.onfocus=show;b.onmouseenter=show;b.onclick=show;});
   const negative=[],positive=[];for(let i=0;i<series.length;i++)for(let j=i+1;j<series.length;j++)if(cells[i][j].percent!==null){const c={i,j,...cells[i][j]};if(c.percent<0)negative.push(c);else if(c.percent>0)positive.push(c);}
   negative.sort((a,b)=>a.percent-b.percent);positive.sort((a,b)=>b.percent-a.percent);
   const ranking=(list,same)=>list.length?list.slice(0,6).map(c=>`<div class="inverse-row${same?' same-direction':''}"><span>${escape(series[c.i].name+' / '+series[c.j].name)}</span><div class="inverse-track"><svg viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true"><rect width="${Math.abs(c.percent)}" height="10" rx="3"/></svg></div><b>${same?'+':''}${format(c.percent,1)} %</b><small>${c.count} ${translate('points')}</small></div>`).join(''):'<p class="hint">'+translate(same?'Aucune corrélation positive mesurée sur cette période.':'Aucune corrélation négative mesurée sur cette période.')+'</p>';
   $('#inverse-pairs').innerHTML=ranking(negative,false);$('#positive-pairs').innerHTML=ranking(positive,true);
+  $('#matrix-coverage').innerHTML='<table><thead><tr><th>'+translate('Actif')+'</th><th>'+translate('Clôtures daily enregistrées')+'</th><th>'+translate('Première fin de période')+'</th><th>'+translate('Dernière')+'</th></tr></thead><tbody>'+series.map(s=>'<tr><td>'+escape(s.name)+'</td><td>'+s.price.length+'</td><td>'+(s.price.length?date(s.price[0].time):'—')+'</td><td>'+(s.price.length?date(s.price.at(-1).time):'—')+'</td></tr>').join('')+'</tbody></table>';
   $('#matrix-detail').textContent=translate('Survolez ou sélectionnez une case pour voir sa couverture.');
  }
  $('#correlation-mode').onchange=()=>{mode=$('#correlation-mode').value;onChange();};

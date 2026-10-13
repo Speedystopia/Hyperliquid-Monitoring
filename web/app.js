@@ -4,8 +4,8 @@ let markets=['BRENTOIL','WTIOIL'],route='home';
 const L=OilI18n.translate;
 let history=null,account=null,chosenAddress='',frame='4h',view=null,series=[],lastAccountVersion=null,startupLoaded=false;
 let seriesSource=null,analysisCache=null,summarySource=null,summaryCache=[],levelSource=null,levelCache=[],lastStatusText=null,lastSuccess=null,annualStats=[];
-const frameCache=new Map(),historyClient=OilUpdates.createHistoryClient(fetch,data=>data?.schemaVersion===2&&C.keys.every(m=>['fundingHourly','close4h','close1d'].every(k=>Array.isArray(data.markets?.[m]?.[k]?.rows))));
-const names=Object.fromEntries(C.keys.map(m=>[m,C.assets[m].name])),step=()=>frame==='4h'?4*M.HOUR:24*M.HOUR;
+const frameCache=new Map(),historyClient=OilUpdates.createHistoryClient(fetch,data=>data?.schemaVersion===3&&C.keys.every(m=>['fundingHourly','close4h','close1d'].every(k=>Array.isArray(data.markets?.[m]?.[k]?.rows))));
+const names=Object.fromEntries(C.keys.map(m=>[m,C.assets[m].name])),unit=m=>C.assets[m].unit||'USD',precision=m=>C.assets[m].precision||(m==='EURUSD'?5:2),step=()=>frame==='4h'?4*M.HOUR:24*M.HOUR;
 let formatterLocale='';const numberFormats=new Map(),dateFormats=new Map();
 function prepareFormats(){if(formatterLocale!==OilI18n.locale){formatterLocale=OilI18n.locale;numberFormats.clear();dateFormats.clear();}}
 const fmt=(n,d=2)=>{if(!Number.isFinite(n))return '—';prepareFormats();if(!numberFormats.has(d))numberFormats.set(d,new Intl.NumberFormat(formatterLocale,{minimumFractionDigits:d,maximumFractionDigits:d}));return numberFormats.get(d).format(n);};
@@ -16,7 +16,7 @@ function buildSeries(){
  if(!history||route==='home'||route==='global')return;
  if(seriesSource!==history){seriesSource=history;frameCache.clear();analysisCache=null;annualStats=[];}
  series=markets.map((m,i)=>{const key=m+'|'+frame;if(!frameCache.has(key)){const d=history.markets[m];frameCache.set(key,{name:names[m],market:m,funding:M.aggregateFunding(d.fundingHourly.rows,frame==='4h'?4:24),price:d[frame==='4h'?'close4h':'close1d'].rows.map(r=>({time:r.time,value:r.close}))});}return {...frameCache.get(key),color:colors[i]};});if(!annualStats.length)annualStats=markets.map(m=>M.fundingStats(history.markets[m].fundingHourly.rows));
- $('#funding-frame').textContent=L('/ '+(frame==='4h'?'4H':'1D'));
+ $('#funding-frame').textContent=L('/ '+(frame==='4h'?'4H':'1D'));const units=[...new Set(markets.map(unit))].join(' · ');$('#price-unit').textContent=units;$('#combined-unit').textContent=L('Gauche : funding % · Droite : prix ')+units;
  renderMetrics();renderInsights();renderCoverage();
 }
 function selectedWindow(){
@@ -33,8 +33,8 @@ function selectedAnalysis(){
 function renderMetrics(){
  if(!history||!series.length)return;const analysis=selectedAnalysis(),window=analysis.window;
  $('#metrics').innerHTML=series.flatMap((s,i)=>{
-  const {price,funding,first,last}=analysis.data[i],precision=s.market==='EURUSD'?5:2,cls=i===0?'brent-text':'wti-text';
-  return [`<div class="metric"><label><a class="market-link" href="https://app.hyperliquid.xyz/trade/${C.assets[s.market].link}" target="_blank" rel="noopener noreferrer">${s.name} ↗</a> · clôture ${frame==='4h'?'4H':'daily'}</label><strong class="${cls}">${price.latest?fmt(price.latest.value,precision):'—'} <small>USD</small></strong><small>${price.latest?date(price.latest.time):'Aucune donnée'}</small><p class="hint">${window.label} · Moyenne des clôtures : ${fmt(price.average,precision)} USD<br>Variation du prix : ${fmt(price.change)} %</p></div>`,
+  const {price,funding,first,last}=analysis.data[i],digits=precision(s.market),quoteUnit=unit(s.market),cls=i===0?'brent-text':'wti-text';
+  return [`<div class="metric"><label><a class="market-link" href="https://app.hyperliquid.xyz/trade/${C.assets[s.market].link}" target="_blank" rel="noopener noreferrer">${s.name} ↗</a> · clôture ${frame==='4h'?'4H':'daily'}</label><strong class="${cls}">${price.latest?fmt(price.latest.value,digits):'—'} <small>${quoteUnit}</small></strong><small>${price.latest?date(price.latest.time):'Aucune donnée'}</small><p class="hint">${window.label} · Moyenne des clôtures : ${fmt(price.average,digits)} ${quoteUnit}<br>Variation du prix : ${fmt(price.change)} %</p></div>`,
    `<div class="metric"><label>${s.name} · funding cumulé · ${window.label}</label><strong class="${cls}">${fmt(funding.total,5)} <small>%</small></strong><small>${first?date(first)+' → '+date(last):'Aucune donnée'}</small><p class="hint">${funding.count.toLocaleString(OilI18n.locale)} paiements · ${funding.hours.toLocaleString(OilI18n.locale)} heures couvertes · ${fmt(funding.days,1)} jours observés</p></div>`];
  }).join('');OilI18n.tree($('#metrics'));
 }
@@ -60,9 +60,9 @@ function clearAccountCaches(){summarySource=null;summaryCache=[];levelSource=nul
 function summaries(){if(summarySource!==account){summarySource=account;summaryCache=markets.map(m=>({...M.positionSummary(account?.positions||[],m),market:m}));}return summaryCache;}
 function renderPositions(){
  if(!account){clearAccountCaches();$('#positions').innerHTML='';drawAll();return;}
- const ss=summaries();let cards=ss.map(s=>`<div class="position-market"><h4 class="${s.market===markets[0]?'brent-text':'wti-text'}">${names[s.market]} · ${s.rows.length} position${s.rows.length>1?'s':''}</h4>${s.rows.length?`<div class="position-data"><div><label>Entrée moyenne pondérée</label><b>${M.fixed(s.entry)} USD</b></div><div><label>Funding net depuis ouverture</label><b class="${s.funding!==null&&s.funding>=0n?'positive':'negative'}">${s.funding!==null&&s.funding>0n?'+':''}${M.fixed(s.funding,6)} USDC</b></div><div><label>Liquidation moyenne indicative</label><b>${M.fixed(s.liquidation)} USD</b></div></div><p class="hint">${s.long!==null?'Long · entrée '+M.fixed(s.long):''}${s.long!==null&&s.short!==null?' / ':''}${s.short!==null?'Short · entrée '+M.fixed(s.short):''} · + reçu / − payé${s.rows.some(r=>r.liquidationPrice===null)?' · certains seuils de liquidation indisponibles':''}</p>`:'<p class="hint">Aucune position ouverte sur ce marché.</p>'}</div>`).join('');
+ const ss=summaries();let cards=ss.map(s=>`<div class="position-market"><h4 class="${s.market===markets[0]?'brent-text':'wti-text'}">${names[s.market]} · ${s.rows.length} position${s.rows.length>1?'s':''}</h4>${s.rows.length?`<div class="position-data"><div><label>Entrée moyenne pondérée</label><b>${M.fixed(s.entry)} ${unit(s.market)}</b></div><div><label>Funding net depuis ouverture</label><b class="${s.funding!==null&&s.funding>=0n?'positive':'negative'}">${s.funding!==null&&s.funding>0n?'+':''}${M.fixed(s.funding,6)} USDC</b></div><div><label>Liquidation moyenne indicative</label><b>${M.fixed(s.liquidation)} ${unit(s.market)}</b></div></div><p class="hint">${s.long!==null?'Long · entrée '+M.fixed(s.long):''}${s.long!==null&&s.short!==null?' / ':''}${s.short!==null?'Short · entrée '+M.fixed(s.short):''} · + reçu / − payé${s.rows.some(r=>r.liquidationPrice===null)?' · certains seuils de liquidation indisponibles':''}</p>`:'<p class="hint">Aucune position ouverte sur ce marché.</p>'}</div>`).join('');
  const rows=(account.positions||[]).filter(p=>markets.includes(p.market)).map(p=>`<tr><td>${esc(p.name)}<br><small>${esc(p.account.slice(0,6)+'…'+p.account.slice(-4))}</small></td><td>${names[p.market]}</td><td>${Number(p.size)>0?'Long':'Short'} ${esc(p.size)}</td><td>${esc(p.entryPrice??'—')}</td><td>${esc(p.liquidationPrice??'Indisponible')}</td><td>${M.fixed(M.received([p]),6)}</td></tr>`).join('');
- $('#positions').innerHTML=`<div class="position-summary">${cards}</div>${rows?`<div class="position-detail"><table><thead><tr><th>Compte</th><th>Marché</th><th>Position</th><th>Entrée USD</th><th>Liquidation USD</th><th>Funding net USDC</th></tr></thead><tbody>${rows}</tbody></table></div>`:''}`;
+ $('#positions').innerHTML=`<div class="position-summary">${cards}</div>${rows?`<div class="position-detail"><table><thead><tr><th>Compte</th><th>Marché</th><th>Position</th><th>Entrée</th><th>Liquidation</th><th>Funding net USDC</th></tr></thead><tbody>${rows}</tbody></table></div>`:''}`;
  $('#account-status').textContent=L(`${account.accountCount??0} compte(s) consulté(s) · actualisé ${date(account.scannedAt)} · adresse non enregistrée${account.errors?.length?' · ⚠ '+account.errors.join(' · '):''}`);drawAll();
  OilI18n.tree($('#positions'));
 }
@@ -113,7 +113,7 @@ class Chart{
   ctx.restore();ctx.setLineDash([]);
   const used=[];for(const l of ls){let yy=y(l.value,priceAxis)-5;while(used.some(t=>Math.abs(t-yy)<13))yy-=13;yy=Math.max(top+8,Math.min(bottom-5,yy));used.push(yy);ctx.font='10px Segoe UI';ctx.textAlign='left';ctx.fillStyle='#101c21dd';const width=ctx.measureText(l.label).width+9;ctx.fillRect(left+4,yy-10,Math.min(pw-8,width),13);ctx.fillStyle=l.color;ctx.fillText(L(l.label),left+8,yy,Math.max(0,pw-16));}
   if(this.hover&&!this.drag&&this.hover.x>=left&&this.hover.x<=right&&this.hover.y>=top&&this.hover.y<=bottom){const time=Math.round((view.start+(this.hover.x-left)/pw*span)/step())*step(),xx=x(time);ctx.strokeStyle='#8fa5b0';ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(xx,top);ctx.lineTo(xx,bottom);ctx.stroke();ctx.setLineDash([]);let html=`<b>${esc(date(time))}</b>`;
-   for(const q of curves){const candidate=q[q.key][M.indexAfter(q[q.key],time)-1],p=candidate?.time===time?candidate:null;html+=`<div><span class="${q.market===markets[0]?'brent-text':'wti-text'}">${q.label}</span> : ${p?fmt(p.value,q.key==='funding'?5:4):'Manquant'} ${q.key==='funding'?'%':'USD'}</div>`;}
+   for(const q of curves){const candidate=q[q.key][M.indexAfter(q[q.key],time)-1],p=candidate?.time===time?candidate:null;html+=`<div><span class="${q.market===markets[0]?'brent-text':'wti-text'}">${q.label}</span> : ${p?fmt(p.value,q.key==='funding'?5:4):'Manquant'} ${q.key==='funding'?'%':unit(q.market)}</div>`;}
    this.hoverBucket=time;this.tip.innerHTML=html;OilI18n.tree(this.tip);this.tip.style.display='block';this.positionTooltip();
   }else{this.hoverBucket=null;this.tip.style.display='none';}
  }
@@ -121,15 +121,15 @@ class Chart{
 const charts=[new Chart('funding','funding'),new Chart('price','price'),new Chart('combined','combined')];function drawAll(){if(route!=='home'&&route!=='global')charts.forEach(c=>c.requestDraw());}
 const globalView=createGlobalView({math:M,catalog:C,translate:L,format:fmt,date,escape:esc});
 globalView.setChange(renderGlobal);
-function renderGlobal(){globalView.render(history,frame,Number($('#range').value));}
+function renderGlobal(){globalView.render(history,'1d',0);}
 function renderNavigation(){
  for(const [i,id] of ['asset-a','asset-b'].entries()){
   $('#'+id).innerHTML=C.keys.map(m=>'<option value="'+m+'"'+(m===markets[1-i]?' disabled':'')+'>'+esc(names[m])+'</option>').join('');$('#'+id).value=markets[i];
  }
- $('#monitor-link').href='#monitor/'+markets.join('/');
+ $('#monitor-link').href='#monitor/'+markets.join('/');$('#page-count').textContent=L(C.keys.length+' actifs · '+(C.keys.length*(C.keys.length-1)/2)+' comparaisons');
 }
 function renderHome(){
- const quote=m=>{const p=history?.markets[m]?.close4h.rows.at(-1);return '<div><span>'+esc(names[m])+'</span><b>'+fmt(p?.close,m==='EURUSD'?5:2)+' <small>USD</small></b><small>'+(p?date(p.time):L('Collecte en cours…'))+'</small></div>';};
+ const quote=m=>{const p=history?.markets[m]?.close4h.rows.at(-1);return '<div><span>'+esc(names[m])+'</span><b>'+fmt(p?.close,precision(m))+' <small>'+unit(m)+'</small></b><small>'+(p?date(p.time):L('Collecte en cours…'))+'</small></div>';};
  $('#market-cards').innerHTML=`<a class="market-card" href="#monitor/${markets.join('/')}"><span class="eyebrow">01 / MONITORING</span><h3>${esc(C.title(markets))}<span>↗</span></h3><div class="card-quotes">${markets.map(quote).join('')}</div><p>${L('Funding · prix · positions')}<span>${L('Ouvrir')} →</span></p></a><a class="market-card global-card" href="#global"><span class="eyebrow">02 / ${L('VUE GLOBALE')}</span><h3>${L('Tous les actifs')}<span>↗</span></h3><div class="mini-matrix" aria-hidden="true">${Array.from({length:24},(_,i)=>'<i class="'+(i%3===0?'inverse':i%5===0?'neutral':'')+'"></i>').join('')}</div><p>${L('Corrélations globales')}<span>${L('Ouvrir')} →</span></p></a>`;
 }
 function renderPageLabels(){
@@ -150,7 +150,7 @@ function switchPage(){
  if(parts[0]==='monitor'&&C.assets[parts[1]]&&C.assets[parts[2]]&&parts[1]!==parts[2])chosen=parts.slice(1,3);
  const next=parts[0]==='monitor'?'monitor':hash==='global'?'global':'home';
  if(next!==route||chosen.join('|')!==markets.join('|')){charts.forEach(c=>c.suspend());route=next;markets=chosen;analysisCache=null;annualStats=[];clearAccountCaches();view=null;series=[];}
- $('#home-view').hidden=route!=='home';$('#monitor-content').hidden=route==='home';$('#page-intro').hidden=route==='home';$('#pair-view').hidden=route==='global';$('#global-view').hidden=route!=='global';$('#reset').hidden=route==='global';
+ $('#home-view').hidden=route!=='home';$('#monitor-content').hidden=route==='home';$('#page-intro').hidden=route==='home';$('#pair-view').hidden=route==='global';$('#global-view').hidden=route!=='global';$('#reset').hidden=route==='global';$('#monitor-toolbar').hidden=route==='global';
  renderNavigation();renderPageLabels();
  if(route==='home')renderHome();else if(route==='global')renderGlobal();else{buildSeries();resetView();renderPositions();}
  window.scrollTo({top:0,behavior:'instant'});
