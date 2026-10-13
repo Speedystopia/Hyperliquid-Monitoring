@@ -1,12 +1,13 @@
 'use strict';
 function createGlobalView({math,catalog,translate,format,date,escape}){
- const $=s=>document.querySelector(s);let cache=null,cells=null,series=[],mode='returns';
+ const $=s=>document.querySelector(s);let cache=null,cells=null,series=[],mode='returns',fundingSource=null,funding=[];
  function showCell(i,j){
   if(!cells)return;const c=cells[i][j],names=series[i].name+' / '+series[j].name;
   $('#matrix-detail').textContent=names+' · '+(c.percent===null?translate('Données insuffisantes'):format(c.percent,2)+' %')+' · '+c.count+' '+translate('observations appariées')+(c.first?' · '+date(c.first)+' → '+date(c.last):'');
  }
  function render(history,frame,days){
   if(!history||document.hidden)return;
+  if(fundingSource!==history){funding=catalog.keys.map(m=>math.fundingStats(history.markets[m].fundingHourly.rows));fundingSource=history;}
   const span=frame==='4h'?4*math.HOUR:24*math.HOUR;
   if(!cache||cache.history!==history||cache.frame!==frame||cache.days!==days||cache.mode!==mode){
    series=catalog.keys.map(m=>({market:m,name:catalog.assets[m].name,price:history.markets[m][frame==='4h'?'close4h':'close1d'].rows.map(r=>({time:r.time,value:r.close}))}));
@@ -32,9 +33,12 @@ function createGlobalView({math,catalog,translate,format,date,escape}){
   negative.sort((a,b)=>a.percent-b.percent);positive.sort((a,b)=>b.percent-a.percent);
   const ranking=(list,same)=>list.length?list.slice(0,6).map(c=>`<div class="inverse-row${same?' same-direction':''}"><span>${escape(series[c.i].name+' / '+series[c.j].name)}</span><div class="inverse-track"><svg viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true"><rect width="${Math.abs(c.percent)}" height="10" rx="3"/></svg></div><b>${same?'+':''}${format(c.percent,1)} %</b><small>${c.count} ${translate('points')}</small></div>`).join(''):'<p class="hint">'+translate(same?'Aucune corrélation positive mesurée sur cette période.':'Aucune corrélation négative mesurée sur cette période.')+'</p>';
   $('#inverse-pairs').innerHTML=ranking(negative,false);$('#positive-pairs').innerHTML=ranking(positive,true);
+  const filtered=math.oppositeFundingPairs(cells,funding);
+  const fundingCell=i=>{const s=series[i],f=funding[i],rows=history.markets[s.market].fundingHourly.rows;return `<td><span>${escape(s.name)}</span><b class="${f.annualized>0?'positive':'negative'}">${f.annualized>0?'+':''}${format(f.annualized,3)} ${translate('% / an')}</b><small>${format(f.count,0)} ${translate('paiements')} · ${format(f.days,1)} ${translate('jours observés')}<br>${date(rows[0].time)} → ${date(rows.at(-1).time)}</small></td>`;};
+  $('#funding-pairs').innerHTML=filtered.length?'<table class="funding-pair-table"><thead><tr><th>'+translate('Actif A · funding annualisé')+'</th><th>'+translate('Actif B · funding annualisé')+'</th><th>'+translate('Corrélation Daily')+'</th></tr></thead><tbody>'+filtered.slice(0,6).map(c=>'<tr>'+fundingCell(c.i)+fundingCell(c.j)+'<td><b class="positive">+'+format(c.percent,1)+' %</b><small>'+c.count+' '+translate('points')+'<br>'+date(c.first)+' → '+date(c.last)+'</small></td></tr>').join('')+'</tbody></table>':'<p class="hint">'+translate('Aucune paire avec corrélation positive et fundings annualisés de signes opposés.')+'</p>';
   $('#matrix-coverage').innerHTML='<table><thead><tr><th>'+translate('Actif')+'</th><th>'+translate('Clôtures daily enregistrées')+'</th><th>'+translate('Première fin de période')+'</th><th>'+translate('Dernière')+'</th></tr></thead><tbody>'+series.map(s=>'<tr><td>'+escape(s.name)+'</td><td>'+s.price.length+'</td><td>'+(s.price.length?date(s.price[0].time):'—')+'</td><td>'+(s.price.length?date(s.price.at(-1).time):'—')+'</td></tr>').join('')+'</tbody></table>';
   $('#matrix-detail').textContent=translate('Survolez ou sélectionnez une case pour voir sa couverture.');
  }
  $('#correlation-mode').onchange=()=>{mode=$('#correlation-mode').value;onChange();};
- let onChange=()=>{};return {render,setChange(fn){onChange=fn;},invalidate(){cache=null;cells=null;series=[];}};
+ let onChange=()=>{};return {render,setChange(fn){onChange=fn;},invalidate(){cache=null;cells=null;series=[];fundingSource=null;funding=[];}};
 }

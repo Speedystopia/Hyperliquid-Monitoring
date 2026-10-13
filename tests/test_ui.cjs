@@ -54,3 +54,11 @@ console.log("JS: legacy 8-hour BTC/ETH funding preserves payment sums, weights a
 const newLabels={en:"Strongest same-direction moves",fr:"Mouvements les plus similaires",zh:"最强同向变动",ko:"가장 강한 같은 방향 움직임",ja:"同方向の動きが強い組み合わせ",it:"Movimenti più simili",es:"Movimientos más similares"};
 for(const [language,text] of Object.entries(newLabels)){langContext.testI18n.set(language);assert.equal(langContext.testI18n.translate("Mouvements les plus similaires"),text);}
 console.log("JS: positive-ranking labels translated in all seven languages OK");
+
+const fundingSigns=[{annualized:2},{annualized:-3},{annualized:0},{annualized:null},{annualized:4}];
+const signCells=fundingSigns.map(()=>fundingSigns.map(()=>({percent:10,count:5,first:1,last:5})));
+signCells[0][1]={percent:80,count:5};signCells[1][4]={percent:95,count:5};signCells[0][4]={percent:100,count:5};
+assert.deepEqual(M.oppositeFundingPairs(signCells,fundingSigns).map(p=>[p.i,p.j]),[[1,4],[0,1]]);
+signCells[1][4]={percent:-95,count:5};signCells[0][1]={percent:80,count:2};assert.equal(M.oppositeFundingPairs(signCells,fundingSigns).length,0);
+const mixedFunding=M.fundingStats([{time:M.HOUR,fundingRate:.0001},{time:9*M.HOUR,fundingRate:-.0004,intervalHours:8}]);assert.ok(mixedFunding.annualized<0);
+console.log('JS: positive-correlation ranking filters strictly opposite annualized signs, excludes zero/missing/short samples and retains both orientations OK');
