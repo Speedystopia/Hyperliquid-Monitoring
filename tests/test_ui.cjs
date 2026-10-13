@@ -59,10 +59,12 @@ const fundingSigns=[{annualized:2},{annualized:-3},{annualized:0},{annualized:nu
 const signCells=fundingSigns.map(()=>fundingSigns.map(()=>({percent:10,count:5,first:1,last:5})));
 signCells[0][1]={percent:80,count:5};signCells[1][4]={percent:95,count:5};signCells[0][4]={percent:100,count:5};
 assert.deepEqual(M.oppositeFundingPairs(signCells,fundingSigns).map(p=>[p.i,p.j]),[[1,4],[0,1]]);
-assert.deepEqual(M.oppositeFundingPairs(signCells,fundingSigns).map(p=>p.netAnnualized),[-7,5]);
+assert.deepEqual(M.oppositeFundingPairs(signCells,fundingSigns).map(p=>[p.netAnnualized,p.shortIsA]),[[7,false],[5,true]]);
+for(const [a,b,net,shortIsA] of [[10,4,6,true],[4,10,6,false],[10,-4,14,true],[-4,10,14,false],[-10,-4,6,false],[-4,-10,6,true],[3,3,0,true]]){assert.deepEqual(M.fundingCarry(a,b),{netAnnualized:net,shortIsA});const notional=1000;assert.equal(notional*(shortIsA?a-b:b-a)/100,notional*net/100);}
+assert.equal(M.fundingCarry(null,4),null);assert.equal(M.fundingCarry(10,NaN),null);
 for(const [net,benchmark,band] of [[6,7,'below'],[6.001,7,'near'],[7,7,'near'],[7.999,7,'near'],[8,7,'above'],[-6,-5,'below'],[-5,-5,'near'],[-4,-5,'above'],[0,0,'near'],[6,null,'unknown'],[NaN,7,'unknown']])assert.equal(M.fundingNetBand(net,benchmark),band);
 const netCss=fs.readFileSync(require.resolve('../web/style.css'),'utf8');for(const style of ['.funding-net-below{color:#e995a1}', '.funding-net-near{color:#f4d35e}', '.funding-net-above{color:#8ee6ae}'])assert.ok(netCss.includes(style));
-for(const language of ['en','fr','zh','ko','ja','it','es']){langContext.testI18n.set(language);for(const label of ['Écart net A − B','Short A · Long B · montants égaux','Corrélation · tout l’historique'])assert.ok(language==='fr'||langContext.testI18n.translate(label)!==label);}
+for(const language of ['en','fr','zh','ko','ja','it','es']){langContext.testI18n.set(language);for(const label of ['Funding net annualisé','Short A · Long B · montants égaux','Long A · Short B · montants égaux','Corrélation · tout l’historique'])assert.ok(language==='fr'||langContext.testI18n.translate(label)!==label);}
 signCells[1][4]={percent:-95,count:5};signCells[0][1]={percent:80,count:2};assert.equal(M.oppositeFundingPairs(signCells,fundingSigns).length,0);
 const mixedFunding=M.fundingStats([{time:M.HOUR,fundingRate:.0001},{time:9*M.HOUR,fundingRate:-.0004,intervalHours:8}]);assert.ok(mixedFunding.annualized<0);
 console.log('JS: positive-correlation ranking filters strictly opposite annualized signs, excludes zero/missing/short samples and retains both orientations OK');
