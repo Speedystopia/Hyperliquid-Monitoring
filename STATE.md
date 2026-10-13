@@ -1,6 +1,6 @@
 # État du projet — 13 octobre 2026
 
-Dépôt : https://github.com/Speedystopia/Hyperliquid-Monitoring ; branche main. Version v3.1.0 : sources et exécutable validés localement, livraison Bureau et release GitHub prévues sur le commit contenant cet état.
+Dépôt : https://github.com/Speedystopia/Hyperliquid-Monitoring ; branche main. Version v3.1.0 livrée : https://github.com/Speedystopia/Hyperliquid-Monitoring/releases/tag/v3.1.0 . Exécutable Bureau identique à la release ; SHA256 a20786f55495fafa6037f1602935749860f69b9b9c0a052387a11feada48e149. CI Windows réussie sur le commit de release162eb05b051f61514aeef17390f0384d9b7216f5.
 
 ## Installation et fonctionnement
 
@@ -36,5 +36,5 @@ Dépôt : https://github.com/Speedystopia/Hyperliquid-Monitoring ; branche main.
 ## Vérification et livraison
 
 - Build : tools/build.cmd. Tests C/JS : schémas/migration, sources et barèmes, dates/crossECB, EIA rollover/valeurs négatives, Binance partiels/closed, coûts par jambe/VWAP, cache périmé, adaptatif sans anticipation, égal versus ajusté, 155 traductions, chargement public à la demande/version, polls au repos et masqué.
-- Collectes réelles vérifiées : quinze contextes/frais/carnets ; huit références publiques, BTC/ETH3343clôtures chacun, ECB7113chacun, WTI9517,Brent9102,NatGas5702,Diesel5096. Avantmiseàjour170783observationsHyperliquid conservées. Parcours navigateur vérifié pour coûts, maker indisponible, modes adaptatif/calendrier, source et actifs, traductions FR/EN ; huit sources actives sans erreur et réponse API200/304 sans corps vérifiée. Publication GitHub à confirmer par les outils.
+- Collectes réelles vérifiées : quinze contextes/frais/carnets ; huit références publiques, BTC/ETH3343clôtures chacun, ECB7113chacun, WTI9517,Brent9102,NatGas5702,Diesel5096. Avantmiseàjour170783observationsHyperliquid conservées. Parcours navigateur vérifié pour coûts, maker indisponible, modes adaptatif/calendrier, source et actifs, traductions FR/EN ; huit sources actives sans erreur et réponse API200/304 sans corps vérifiée. Publication v3.1.0, asset et compilation/test Windows sur GitHub confirmés par les outils.
 - Livrer executable identique Bureau/GitHubRelease, source complète et README ; vérifier SHA256 de l’asset et CI Windows du commit. Garder tests privés/captures dans work/ hors des livrables.
